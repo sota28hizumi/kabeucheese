@@ -77,8 +77,19 @@ main { display: grid; grid-template-columns: 1fr 360px; min-height: 0; }
 .stage { position: relative; overflow: auto; min-width: 0;
   background-image: linear-gradient(var(--grid) 1px, transparent 1px), linear-gradient(90deg, var(--grid) 1px, transparent 1px);
   background-size: 24px 24px; }
-.canvas { position: relative; }
+.stagewrap { position: relative; display: grid; min-width: 0; min-height: 0; }
+.stagewrap > .stage { min-height: 0; }
+.sizer { position: relative; }
+.canvas { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
 .canvas svg { position: absolute; inset: 0; overflow: visible; pointer-events: none; }
+.zoombar { position: absolute; right: 14px; bottom: 14px; z-index: 5; display: flex; align-items: center;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 4px 14px rgb(0 0 0 / .12); overflow: hidden; }
+.zoombar button { background: none; border: 0; padding: 5px 10px; cursor: pointer; color: var(--ink); line-height: 1.2; }
+.zoombar button + button { border-left: 1px solid var(--line); }
+.zoombar button:hover:not(:disabled) { background: var(--bg); }
+.zoombar button:disabled { color: var(--gray); cursor: default; }
+.zoombar #zoomPct { min-width: 4.2em; font-family: var(--font-mono); font-size: 12px; font-variant-numeric: tabular-nums; }
+.zoombar .step { font-size: 16px; width: 34px; }
 .node {
   position: absolute; width: 212px; height: 86px; box-sizing: border-box; padding: 7px 10px 6px 12px;
   background: var(--surface); border: 1px solid var(--line); border-radius: 8px; cursor: pointer; text-align: left;
@@ -155,7 +166,7 @@ textarea { width: 100%; box-sizing: border-box; min-height: 84px; resize: vertic
 @media (max-width: 760px) {
   main { grid-template-columns: 1fr; grid-template-rows: auto auto; overflow: auto; }
   .stage { overflow: visible; background-image: none; }
-  .canvas { display: none; }
+  .sizer, .zoombar { display: none !important; }
   .vtree { display: block; }
   .panel { border-left: 0; border-top: 1px solid var(--line); padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
   .search { margin-left: 0; width: 100%; }
@@ -184,9 +195,17 @@ textarea { width: 100%; box-sizing: border-box; min-height: 84px; resize: vertic
     </div>
   </header>
   <main>
-    <section class="stage" id="stage" aria-label="マップ">
-      <div class="empty" id="loading"><h2>読み込み中</h2><p>保存済みのマップを読んでいます。</p></div>
-    </section>
+    <div class="stagewrap">
+      <section class="stage" id="stage" aria-label="マップ">
+        <div class="empty" id="loading"><h2>読み込み中</h2><p>保存済みのマップを読んでいます。</p></div>
+      </section>
+      <div class="zoombar" id="zoombar" role="group" aria-label="マップの拡大と縮小" hidden>
+        <button type="button" class="step" id="zoomOut" aria-label="縮小" title="縮小（Ctrl＋ホイール、−キー）">−</button>
+        <button type="button" id="zoomPct" title="100% に戻す">100%</button>
+        <button type="button" class="step" id="zoomIn" aria-label="拡大" title="拡大（Ctrl＋ホイール、＋キー）">＋</button>
+        <button type="button" id="zoomFit" title="全体を表示（0キー）">全体</button>
+      </div>
+    </div>
     <aside class="panel" id="panel" aria-live="polite"></aside>
   </main>
 </div>
@@ -210,8 +229,10 @@ textarea { width: 100%; box-sizing: border-box; min-height: 84px; resize: vertic
   const S = {
     db: null, sessions: new Map(), terms: new Map(), memos: new Map(), current: null,
     folder: null, sessionId: null, view: 'map', sel: null, loaded: { s: false, t: false },
-    termOpen: new Set(), userPicked: false,
+    termOpen: new Set(), userPicked: false, zoom: 1,
   };
+  // 拡大は 200% まで。縮小は 100% 未満のときだけ、マップ全体がウィンドウに収まる倍率まで
+  const ZOOM_MAX = 2, ZOOM_STEP = 1.25;
 
   const $ = id => document.getElementById(id);
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -256,6 +277,7 @@ textarea { width: 100%; box-sizing: border-box; min-height: 84px; resize: vertic
     if (!s) return;
     S.userPicked = true;
     if (S.folder !== '*') S.folder = folderOf(s);
+    if (S.sessionId !== sid) S.zoom = 1;
     S.sessionId = sid;
     S.view = 'map';
     S.sel = nodeId ? { type: 'node', id: nodeId } : null;
@@ -422,9 +444,9 @@ textarea { width: 100%; box-sizing: border-box; min-height: 84px; resize: vertic
     }
 
     const nodesHtml = L.nodes.map(n => { const p = px(L.pos.get(n.id)); return nodeHtml(n, `left:${p.x}px;top:${p.y}px`); }).join('');
-    const canvas = `<div class="canvas" style="width:${L.w}px;height:${L.h}px">
+    const canvas = `<div class="sizer" style="width:${L.w * S.zoom}px;height:${L.h * S.zoom}px"><div class="canvas" data-w="${L.w}" data-h="${L.h}" style="width:${L.w}px;height:${L.h}px;transform:scale(${S.zoom})">
       <svg width="${L.w}" height="${L.h}" aria-hidden="true"><defs><marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L8,4 L0,8 z" fill="context-stroke"/></marker></defs>${paths.join('')}</svg>
-      ${nodesHtml}${labels.join('')}${xrefs.join('')}</div>`;
+      ${nodesHtml}${labels.join('')}${xrefs.join('')}</div></div>`;
 
     // 縦ツリー
     const xrefsOf = n => {
@@ -584,9 +606,75 @@ textarea { width: 100%; box-sizing: border-box; min-height: 84px; resize: vertic
       const s = S.sessions.get(S.sessionId);
       stage.innerHTML = s && (s.nodes || []).length ? renderMap(s) : `<div class="empty"><h2>論点がありません</h2><p>このセッションにはまだ論点が保存されていません。</p></div>`;
     }
+    setZoom(S.zoom, null, true);
     stage.scrollLeft = scroll.l; stage.scrollTop = scroll.t;
     renderPanel();
   }
+
+  // ---------- 拡大・縮小 ----------
+  function zoomLimits() {
+    const st = $('stage'), c = document.querySelector('.canvas');
+    if (!c || !c.offsetParent) return null;
+    const fit = Math.min(st.clientWidth / Number(c.dataset.w), st.clientHeight / Number(c.dataset.h));
+    // 全体がもう収まっているなら 100% より小さくしない
+    return { min: Math.min(1, fit), max: ZOOM_MAX };
+  }
+  /** z に拡大・縮小する。anchor（ステージ内の座標）の下にある点が動かないようにスクロールを合わせる */
+  function setZoom(z, anchor, quiet) {
+    const st = $('stage'), c = document.querySelector('.canvas'), sizer = document.querySelector('.sizer');
+    const bar = $('zoombar');
+    const lim = zoomLimits();
+    if (!lim || !c || !sizer || S.view !== 'map') { bar.hidden = true; return; }
+    bar.hidden = false;
+    const next = Math.min(lim.max, Math.max(lim.min, z));
+    const prev = S.zoom;
+    const a = anchor || { x: st.clientWidth / 2, y: st.clientHeight / 2 };
+    const cx = (st.scrollLeft + a.x) / prev, cy = (st.scrollTop + a.y) / prev;
+    S.zoom = next;
+    c.style.transform = `scale(${next})`;
+    sizer.style.width = `${Number(c.dataset.w) * next}px`;
+    sizer.style.height = `${Number(c.dataset.h) * next}px`;
+    if (!quiet) {
+      const behavior = st.style.scrollBehavior;
+      st.style.scrollBehavior = 'auto';
+      st.scrollLeft = cx * next - a.x;
+      st.scrollTop = cy * next - a.y;
+      st.style.scrollBehavior = behavior;
+    }
+    const eps = 0.001;
+    $('zoomPct').textContent = `${Math.round(next * 100)}%`;
+    $('zoomOut').disabled = next <= lim.min + eps;
+    $('zoomIn').disabled = next >= lim.max - eps;
+    $('zoomFit').disabled = lim.min >= 1 - eps && Math.abs(next - 1) < eps;
+  }
+  function zoomFit() {
+    const lim = zoomLimits();
+    if (!lim) return;
+    setZoom(lim.min, null, true);
+    const st = $('stage');
+    st.style.scrollBehavior = 'auto'; st.scrollLeft = 0; st.scrollTop = 0; st.style.scrollBehavior = '';
+  }
+  $('zoomIn').addEventListener('click', () => setZoom(S.zoom * ZOOM_STEP));
+  $('zoomOut').addEventListener('click', () => setZoom(S.zoom / ZOOM_STEP));
+  $('zoomPct').addEventListener('click', () => setZoom(1));
+  $('zoomFit').addEventListener('click', zoomFit);
+  // Ctrl（Mac は ⌘）＋ホイール、トラックパッドのピンチで拡大・縮小。カーソルの下を中心にする
+  $('stage').addEventListener('wheel', ev => {
+    if (!(ev.ctrlKey || ev.metaKey) || !document.querySelector('.canvas')) return;
+    ev.preventDefault();
+    const r = $('stage').getBoundingClientRect();
+    const factor = Math.exp(-ev.deltaY * (ev.deltaMode === 1 ? 0.05 : 0.002));
+    setZoom(S.zoom * factor, { x: ev.clientX - r.left, y: ev.clientY - r.top });
+  }, { passive: false });
+  document.addEventListener('keydown', ev => {
+    if (S.view !== 'map' || ev.ctrlKey || ev.metaKey || ev.altKey) return;
+    if (ev.target.closest('input, textarea, select')) return;
+    if (ev.key === '+' || ev.key === '=' || ev.key === ';') { ev.preventDefault(); setZoom(S.zoom * ZOOM_STEP); }
+    else if (ev.key === '-') { ev.preventDefault(); setZoom(S.zoom / ZOOM_STEP); }
+    else if (ev.key === '0') { ev.preventDefault(); zoomFit(); }
+  });
+  let resizeTimer = null;
+  window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => setZoom(S.zoom, null, true), 120); });
 
   // ---------- メモ（ページから DB に書き戻す） ----------
   let memoTimer = null;
