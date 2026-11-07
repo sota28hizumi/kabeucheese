@@ -9,7 +9,7 @@ import { PALETTE, tilesSvg, tint } from './svg'
 // 設定
 // ---------------------------------------------------------------------------
 
-const PANE = 'thinkmap'
+const PANE = 'kabeucheese'
 const TITLE = '思考マップ'
 export const UNSORTED = '未分類'
 
@@ -27,8 +27,8 @@ const EMPTY: Summary = {
   updatedAt: 0,
 }
 
-const summary = atom({ plugin: 'thinkmap', key: 'summary' } as const, EMPTY, { shape: 'summary-1' })
-const url = atom({ plugin: 'thinkmap', key: 'url' } as const, FALLBACK_URL, { shape: 'url-1' })
+const summary = atom({ plugin: 'kabeucheese', key: 'summary' } as const, EMPTY, { shape: 'summary-1' })
+const url = atom({ plugin: 'kabeucheese', key: 'url' } as const, FALLBACK_URL, { shape: 'url-1' })
 
 const storeKey = (sessionId: string) => `summary:${sessionId}`
 const URL_KEY = 'artifactUrl'
@@ -70,7 +70,7 @@ async function contextOf($: Engine) {
 export const isArtifactUrl = (v: unknown): v is string =>
   typeof v === 'string' && /^https:\/\/claude\.ai\/(code\/)?artifact\/[A-Za-z0-9-]+/.test(v)
 
-/** 保存先の URL：config.json にあればそれ、なければ /thinkmap <URL> でこの PC に保存したもの */
+/** 保存先の URL：config.json にあればそれ、なければ /kabemap <URL> でこの PC に保存したもの */
 async function loadUrl($: Engine) {
   let next = ''
   try {
@@ -136,10 +136,10 @@ async function loadStored($: Engine): Promise<boolean> {
 const openPane = ($: Engine) => $.ui.open({ id: PANE, title: TITLE })
 
 export const SETUP_TEXT =
-  '思考マップの保存先がまだ設定されていません。README の「はじめての設定」に沿って Artifact を公開し、/thinkmap <その URL> を送ってください。'
+  '思考マップの保存先がまだ設定されていません。README の「はじめての設定」に沿って Artifact を公開し、/kabemap <その URL> を送ってください。'
 
 const ANALYZE_PROMPT =
-  'thinkmap:analyze スキルの手順で、このセッションの会話を見直して思考マップを更新し、最後にペインを開いてください。'
+  'kabeucheese:analyze スキルの手順で、このセッションの会話を見直して思考マップを更新し、最後にペインを開いてください。'
 
 // ---------------------------------------------------------------------------
 // フック
@@ -150,25 +150,25 @@ export const register: Register = on => {
     const result = await next(e)
     await loadUrl($)
     await $.command.register({
-      name: 'thinkmap',
-      description: '会話を解析して思考マップ（Artifact）を更新し、概要のペインを開く（初回は /thinkmap <Artifact の URL> で保存先を設定）',
+      name: 'kabemap',
+      description: '会話を解析して思考マップ（Artifact）を更新し、概要のペインを開く（初回は /kabemap <Artifact の URL> で保存先を設定）',
       argumentHint: '[Artifact の URL]',
     })
     await $.command.register({
-      name: 'thinkview',
+      name: 'kabeview',
       description: '解析せずに、保存済みの思考マップの概要ペインを開き直す',
     })
     await $.tool.register({
       name: 'context',
       description:
-        'thinkmap の解析に使う前提（このセッションの sessionId、作業フォルダ名 folder、Artifact の URL artifactUrl）を返す。thinkmap:analyze スキルの最初に呼ぶ。',
+        'kabeucheese の解析に使う前提（このセッションの sessionId、作業フォルダ名 folder、Artifact の URL artifactUrl）を返す。kabeucheese:analyze スキルの最初に呼ぶ。',
       inputSchema: { type: 'object', properties: {} },
       isDeferred: false,
     })
     await $.tool.register({
       name: 'show',
       description:
-        'thinkmap:analyze スキルの最後に呼ぶ。このセッションの問いと決定の一覧・件数・新しい用語をペイン用に保存し、思考マップのペインを開く。',
+        'kabeucheese:analyze スキルの最後に呼ぶ。このセッションの問いと決定の一覧・件数・新しい用語をペイン用に保存し、思考マップのペインを開く。',
       inputSchema: {
         type: 'object',
         properties: {
@@ -205,12 +205,12 @@ export const register: Register = on => {
     return result
   })
 
-  on('tool.call', { tool: 'mcp__thinkmap__context' }, async $ => {
+  on('tool.call', { tool: 'mcp__kabeucheese__context' }, async $ => {
     const ctx = await contextOf($)
     return { result: JSON.stringify({ sessionId: ctx.sessionId, folder: ctx.folder, artifactUrl: ctx.artifactUrl }) }
   })
 
-  on('tool.call', { tool: 'mcp__thinkmap__show' }, async ($, e) => {
+  on('tool.call', { tool: 'mcp__kabeucheese__show' }, async ($, e) => {
     const input = ((e as { input?: unknown }).input ?? e) as Record<string, unknown>
     const ctx = await contextOf($)
     const next = toSummary(input, ctx.sessionId, ctx.folder, Date.now())
@@ -220,13 +220,13 @@ export const register: Register = on => {
     return { result: `ペインを開きました（問い${next.counts.questions}・決定${next.counts.decisions}・新しい用語${next.newTerms.length}）。` }
   })
 
-  on('command.run', { command: 'thinkmap' }, async ($, e) => {
+  on('command.run', { command: 'kabemap' }, async ($, e) => {
     const arg = (e.args ?? '').trim()
     if (arg) {
       if (!isArtifactUrl(arg)) return { text: 'claude.ai の Artifact の URL（https://claude.ai/artifact/...）を指定してください。' }
       await $.store.set(URL_KEY, arg)
       await update($, url, () => arg)
-      return { text: `保存先を設定しました：${arg}\nもう一度 /thinkmap を送ると、このセッションのマップを作ります。` }
+      return { text: `保存先を設定しました：${arg}\nもう一度 /kabemap を送ると、このセッションのマップを作ります。` }
     }
     if (!(await read($, url))) {
       await openPane($)
@@ -237,11 +237,11 @@ export const register: Register = on => {
     return { text: '思考マップを更新します。' }
   })
 
-  on('command.run', { command: 'thinkview' }, async $ => {
+  on('command.run', { command: 'kabeview' }, async $ => {
     const found = await loadStored($)
     await openPane($)
     return {
-      text: found ? '保存済みの思考マップを開きました。' : 'このセッションの思考マップはまだありません。/thinkmap で作れます。',
+      text: found ? '保存済みの思考マップを開きました。' : 'このセッションの思考マップはまだありません。/kabemap で作れます。',
     }
   })
 
@@ -281,7 +281,7 @@ export const register: Register = on => {
         <Box flexDirection="column" gap={1}>
           <Text wrap="wrap">このセッションの思考マップはまだありません。</Text>
           <Text dimColor wrap="wrap">
-            /thinkmap を送ると、会話から問い・選択肢・決定と用語を拾って Artifact に保存し、ここに概要を出します。
+            /kabemap を送ると、会話から問い・選択肢・決定と用語を拾って Artifact に保存し、ここに概要を出します。
           </Text>
           <Link href={href} label="思考マップを開く（全セッション）" />
         </Box>

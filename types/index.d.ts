@@ -13,13 +13,13 @@ export type Summary = {
   items: Item[]
   counts: { questions: number; decisions: number; terms: number }
   newTerms: string[]
-  /** 最後に /thinkmap で更新した時刻（epoch ms）。未作成は 0 */
+  /** 最後に /kabemap で更新した時刻（epoch ms）。未作成は 0 */
   updatedAt: number
 }
 
 declare module 'claude-code' {
   interface PluginState {
-    thinkmap: {
+    kabeucheese: {
       summary: Shaped<Summary>
       /** Artifact の URL（config.json から読む） */
       url: Shaped<string>

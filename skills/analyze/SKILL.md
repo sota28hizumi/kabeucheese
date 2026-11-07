@@ -1,15 +1,15 @@
 ---
 name: analyze
-description: thinkmap の解析手順。今のセッションの会話を見直して、問い・選択肢・決定・用語を thinkmap Artifact のデータベースに差分で書き込み、ペインを開く。ユーザーが /thinkmap を送ったとき、または「思考マップを更新して」「thinkmap を作って」と頼んだときに使う。
+description: kabeucheese の解析手順。今のセッションの会話を見直して、問い・選択肢・決定・用語を kabeucheese Artifact のデータベースに差分で書き込み、ペインを開く。ユーザーが /kabemap を送ったとき、または「思考マップを更新して」「kabeucheese を作って」と頼んだときに使う。
 ---
 
-# thinkmap：会話を論点の地図にする
+# kabeucheese：会話を論点の地図にする
 
-このセッションの壁打ちを、あとから見返せる「問い → 選択肢 → 決定」の地図と用語カードにして、thinkmap Artifact のデータベースに保存する。最後にペインを開く。
+このセッションの壁打ちを、あとから見返せる「問い → 選択肢 → 決定」の地図と用語カードにして、kabeucheese Artifact のデータベースに保存する。最後にペインを開く。
 
 ## 0. 前提を取る
 
-1. `mcp__thinkmap__context`（名前が見つからなければ ToolSearch で `thinkmap context` を探す）を呼ぶ。`sessionId`・`folder`・`artifactUrl` が返る。`artifactUrl` が空なら保存先が未設定なので、ここで止まり、README の「はじめての設定」を案内する。ツールが無い環境では、`sessionId` は不明として止まり、ユーザーに thinkmap Mod が入っているか確かめてもらう。
+1. `mcp__kabeucheese__context`（名前が見つからなければ ToolSearch で `kabeucheese context` を探す）を呼ぶ。`sessionId`・`folder`・`artifactUrl` が返る。`artifactUrl` が空なら保存先が未設定なので、ここで止まり、README の「はじめての設定」を案内する。ツールが無い環境では、`sessionId` は不明として止まり、ユーザーに kabeucheese Mod が入っているか確かめてもらう。
 2. `ArtifactData` を ToolSearch で読み込む（`select:ArtifactData`）。以降の読み書きはすべて `url: artifactUrl` で行う。
 
 ## 1. 前回のデータを読む
@@ -98,7 +98,7 @@ version の不一致で断られたら、その文書を読み直してから書
 
 ## 6. ペインを開く
 
-`mcp__thinkmap__show`（見つからなければ ToolSearch で `thinkmap show`）を、次の形で呼ぶ：
+`mcp__kabeucheese__show`（見つからなければ ToolSearch で `kabeucheese show`）を、次の形で呼ぶ：
 
 ```json
 {

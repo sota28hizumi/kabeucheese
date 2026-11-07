@@ -1,14 +1,14 @@
 {
-  "name": "thinkmap",
+  "name": "kabeucheese",
   "description": "壁打ちの思考プロセスを Artifact の思考マップと用語集に残す自作 Mod",
   "owner": {
     "name": "sota28hizumi"
   },
   "plugins": [
     {
-      "name": "thinkmap",
+      "name": "kabeucheese",
       "source": "./",
-      "description": "/thinkmap で会話を論点の地図にして Artifact に保存し、ペインに概要を出す"
+      "description": "/kabemap で会話を論点の地図にして Artifact に保存し、ペインに概要を出す"
     }
   ]
 }

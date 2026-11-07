@@ -1,17 +1,19 @@
-# thinkmap
+# kabeucheese
 
 Claude Code で Claude と壁打ちしたときに、自分がどんな思考をたどったかを後から見返すための Mod（プラグイン）。
 
+名前は「壁打ち（kabeuchi）」と「チーズ（cheese）」から。壁打ちーズ、あるいは壁打チーズ。チーズが糸を引いて伸びるように、考えと考えが線でつながって伸びていく様子を表している。
+
 会話の中の「問い → 選択肢 → 決定」を流れ図にして、途中で「○○について教えて」と聞いた言葉は用語カードにまとめる。保存先は自分専用の Artifact（claude.ai のページ）なので、複数のPCやスマホのどれから開いても同じマップが見える。
 
-![thinkmap の思考マップ。左に問い、右へ選択肢と決定が伸び、右のパネルにセッションの概要が出ている](docs/map.png)
+![kabeucheese の思考マップ。左に問い、右へ選択肢と決定が伸び、右のパネルにセッションの概要が出ている](docs/map.png)
 
-> スクリーンショットは、thinkmap 自体を設計したときの壁打ちを例にしている。
+> スクリーンショットは、kabeucheese 自体を設計したときの壁打ちを例にしている。
 
 ## できること
 
 - **論点の地図**：問い → 選択肢 → 決定を左から右への流れ図で描く。選ばなかった案も灰色で残す。論点どうしの関係（比較・理由・前提・変更）は点線の曲線で結ぶ
-- **差分で育つ**：同じセッションでもう一度 `/thinkmap` すると、前回のマップに新しい論点を足す。覆った決定は「変更前の決定」として取り消し線で残り、新しい決定と「変更」の線で結ばれる
+- **差分で育つ**：同じセッションでもう一度 `/kabemap` すると、前回のマップに新しい論点を足す。覆った決定は「変更前の決定」として取り消し線で残り、新しい決定と「変更」の線で結ばれる
 - **用語カード**：聞いた言葉の定義・自分の文脈での意味・出てきた場所を保存する。用語集は全セッション共通で積み上がる
 - **フォルダで分ける**：セッションごとに作業フォルダ名（`jobHunting`、`research` など）が付く。別フォルダの論点への参照線も引ける
 - **メモ**：論点や用語に自分のメモを書ける。再解析しても消えない
@@ -26,28 +28,28 @@ Claude Code で Claude と壁打ちしたときに、自分がどんな思考を
 1. マーケットプレイスとして登録して入れる。
 
    ```bash
-   claude plugin marketplace add sota28hizumi/thinkmap
-   claude plugin install thinkmap@thinkmap
+   claude plugin marketplace add sota28hizumi/kabemap
+   claude plugin install kabeucheese@kabeucheese
    ```
 
    手元に clone して使う場合は、`marketplace add` に clone したフォルダのパスを渡す。
 
-2. 新しいチャットを開き、`/thinkmap` と `/thinkview` が候補に出れば入っている。
+2. 新しいチャットを開き、`/kabemap` と `/kabeview` が候補に出れば入っている。
 
 ## はじめての設定（保存先の Artifact を作る）
 
 マップの本体は、自分の claude.ai に置く Artifact。最初に一度だけ作る。
 
-1. Claude Code のチャットで、次のように頼む（パスは thinkmap を置いた場所に合わせる）。
+1. Claude Code のチャットで、次のように頼む（パスは kabeucheese を置いた場所に合わせる）。
 
-   > thinkmap の `artifact/index.html` を、`capabilities` に `{"db": {}}` を付けて Artifact として公開して
+   > kabeucheese の `artifact/index.html` を、`capabilities` に `{"db": {}}` を付けて Artifact として公開して
 
    プラグインとして入れた場合、`artifact/index.html` は `~/.claude/plugins/` の下にもある。この README のリポジトリから取ってもよい。
 
 2. 公開された URL（`https://claude.ai/artifact/...`）を、保存先として設定する。
 
    ```
-   /thinkmap https://claude.ai/artifact/xxxxxxxx
+   /kabemap https://claude.ai/artifact/xxxxxxxx
    ```
 
    URL はそのPCに保存される。別のPCでも同じ URL を設定すれば、同じマップを共有できる。
@@ -58,11 +60,11 @@ Claude Code で Claude と壁打ちしたときに、自分がどんな思考を
 
 | コマンド | すること |
 |---|---|
-| `/thinkmap` | 今のセッションの会話を Claude が見直し、マップと用語をデータベースに保存して、概要のペインを開く |
-| `/thinkmap <URL>` | 保存先の Artifact を設定する（初回だけ） |
-| `/thinkview` | 解析せずに、保存済みの概要でペインを開き直す（ペインを閉じたとき用。トークンをほぼ使わない） |
+| `/kabemap` | 今のセッションの会話を Claude が見直し、マップと用語をデータベースに保存して、概要のペインを開く |
+| `/kabemap <URL>` | 保存先の Artifact を設定する（初回だけ） |
+| `/kabeview` | 解析せずに、保存済みの概要でペインを開き直す（ペインを閉じたとき用。トークンをほぼ使わない） |
 
-壁打ちのキリのいいところで `/thinkmap` を送り、ペインのリンクから本体のページを開く。
+壁打ちのキリのいいところで `/kabemap` を送り、ペインのリンクから本体のページを開く。
 
 ## 画面
 
@@ -97,7 +99,7 @@ Claude Code で Claude と壁打ちしたときに、自分がどんな思考を
 
 ### ペイン
 
-`/thinkmap` のあと、チャットの横のペインに次を出す。
+`/kabemap` のあと、チャットの横のペインに次を出す。
 
 - このセッションの問いと決定の一覧（覆った決定は取り消し線）
 - 件数（問い・決定・新しい用語）のタイル
@@ -107,21 +109,21 @@ Claude Code で Claude と壁打ちしたときに、自分がどんな思考を
 ## 仕組み
 
 ```
-/thinkmap ──▶ Claude が thinkmap:analyze スキルの手順で会話を見直す
-                │  mcp__thinkmap__context でセッションIDとフォルダ名を受け取る
+/kabemap ──▶ Claude が kabeucheese:analyze スキルの手順で会話を見直す
+                │  mcp__kabeucheese__context でセッションIDとフォルダ名を受け取る
                 ▼
              Artifact のデータベースに差分で書き込む（ArtifactData）
                 │
                 ▼
-             mcp__thinkmap__show で概要を渡し、ペインを開く
+             mcp__kabeucheese__show で概要を渡し、ペインを開く
 ```
 
 | 場所 | 役割 |
 |---|---|
-| `hooks/register.tsx` | `/thinkmap`・`/thinkview`、ペイン、Claude が呼ぶツール `mcp__thinkmap__context`（セッションIDとフォルダ名を返す）と `mcp__thinkmap__show`（ペイン用の概要を受け取る） |
+| `hooks/register.tsx` | `/kabemap`・`/kabeview`、ペイン、Claude が呼ぶツール `mcp__kabeucheese__context`（セッションIDとフォルダ名を返す）と `mcp__kabeucheese__show`（ペイン用の概要を受け取る） |
 | `skills/analyze/SKILL.md` | 解析の手順とデータベースへの書き込み形式 |
 | `artifact/index.html` | Artifact 本体のソース |
-| `config.json` | 保存先の Artifact の URL（空なら `/thinkmap <URL>` で設定したものを使う） |
+| `config.json` | 保存先の Artifact の URL（空なら `/kabemap <URL>` で設定したものを使う） |
 | `docs/` | この README のスクリーンショット |
 
 データベース（Artifact の `db`）：
@@ -129,7 +131,7 @@ Claude Code で Claude と壁打ちしたときに、自分がどんな思考を
 - `sessions/<セッションID>`：`folder`・`title`・`summary`・`nodes`（論点）・`edges`（枝をまたぐ線）
 - `terms/<用語ID>`：定義・文脈での意味・詳しい説明・具体例・関連用語・出典・`occurrences`（出てきたフォルダ／セッション／論点）
 - `memos/<キー>`：ページで書いたメモ。ページだけが書き、Claude の再解析では触らない
-- `meta/current`：最後に `/thinkmap` したセッション（ページを開いたときの初期表示に使う）
+- `meta/current`：最後に `/kabemap` したセッション（ページを開いたときの初期表示に使う）
 
 フォルダ名は作業フォルダの末尾の名前。フォルダを選ばずに始めたセッション（ホームや一時フォルダ）は「未分類」になる。
 

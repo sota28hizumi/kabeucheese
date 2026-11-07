@@ -1,4 +1,4 @@
-<title>thinkmap</title>
+<title>kabeucheese</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -52,7 +52,8 @@ header.top {
 .brand { font-family: var(--font-display); font-size: 20px; font-weight: 700; letter-spacing: .02em; margin-right: 6px; }
 .brand small { font-family: var(--font-body); font-size: 11px; color: var(--muted); font-weight: 400; margin-left: 8px; letter-spacing: .08em; }
 .ctl { display: flex; align-items: center; gap: 6px; min-width: 0; }
-.ctl label { font-size: 11px; color: var(--muted); letter-spacing: .08em; }
+.ctl label { font-size: 11px; color: var(--muted); letter-spacing: .08em; white-space: nowrap; flex: none; }
+.ctl select { min-width: 0; text-overflow: ellipsis; }
 select, input[type="search"] {
   background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; max-width: 100%;
 }
@@ -154,8 +155,9 @@ textarea { width: 100%; box-sizing: border-box; min-height: 84px; resize: vertic
   .panel { border-left: 0; border-top: 1px solid var(--line); padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
   .search { margin-left: 0; width: 100%; }
   #search { width: 100%; box-sizing: border-box; }
-  #sessionSel { max-width: 100%; }
-  .ctl { flex: 1 1 auto; }
+  #sessionSel { max-width: none; }
+  .ctl { flex: 1 1 100%; }
+  .ctl select { flex: 1 1 auto; width: 0; }
 }
 @media (prefers-reduced-motion: no-preference) {
   .stage { scroll-behavior: smooth; }
@@ -164,7 +166,7 @@ textarea { width: 100%; box-sizing: border-box; min-height: 84px; resize: vertic
 
 <div class="app">
   <header class="top">
-    <div class="brand">thinkmap<small>思考の地図</small></div>
+    <div class="brand">kabeucheese<small>思考の地図</small></div>
     <div class="ctl"><label for="folderSel">フォルダ</label><select id="folderSel"></select></div>
     <div class="ctl"><label for="sessionSel">セッション</label><select id="sessionSel"></select></div>
     <div class="tabs" role="group" aria-label="表示">
@@ -439,7 +441,7 @@ textarea { width: 100%; box-sizing: border-box; min-height: 84px; resize: vertic
   }
   function renderGlossary() {
     const list = termsInScope();
-    if (!list.length) return `<div class="empty"><h2>用語はまだありません</h2><p>${S.folder === '*' ? '' : `「${esc(S.folder)}」で`}「○○について教えて」と聞いた言葉が、<code>/thinkmap</code> のあとここに並びます。</p></div>`;
+    if (!list.length) return `<div class="empty"><h2>用語はまだありません</h2><p>${S.folder === '*' ? '' : `「${esc(S.folder)}」で`}「○○について教えて」と聞いた言葉が、<code>/kabemap</code> のあとここに並びます。</p></div>`;
     return `<div class="glossary">${list.map(t => `<button type="button" class="gcard" data-term="${esc(t.id)}"><b>${esc(t.name)}</b><span>${esc(t.definition)}</span></button>`).join('')}</div>`;
   }
 
@@ -536,8 +538,8 @@ textarea { width: 100%; box-sizing: border-box; min-height: 84px; resize: vertic
     const stage = $('stage');
     if (!S.loaded.s) return;
     if (S.sessions.size === 0) {
-      stage.innerHTML = `<div class="empty"><h2>まだマップがありません</h2><p>Claude Code の壁打ちのあとに <code>/thinkmap</code> を送ると、問い・選択肢・決定と用語がここに描かれます。</p></div>`;
-      $('panel').innerHTML = `<h2>thinkmap</h2><p>セッションごとの思考マップと、全セッション共通の用語集を見るページです。</p><h3>線の種類</h3>${legendHtml()}`;
+      stage.innerHTML = `<div class="empty"><h2>まだマップがありません</h2><p>Claude Code の壁打ちのあとに <code>/kabemap</code> を送ると、問い・選択肢・決定と用語がここに描かれます。</p></div>`;
+      $('panel').innerHTML = `<h2>kabeucheese</h2><p>セッションごとの思考マップと、全セッション共通の用語集を見るページです。</p><h3>線の種類</h3>${legendHtml()}`;
       renderHeader();
       return;
     }
