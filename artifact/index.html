@@ -1,0 +1,666 @@
+<title>thinkmap</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&family=Zen+Old+Mincho:wght@600;700&family=JetBrains+Mono:wght@500&display=swap">
+<style>
+/* 左から右へ流れる論点図。左に地図、右に詳細パネル。狭い幅では縦のツリーとパネルを上下に並べる */
+:root {
+  --bg: #f5f6f4;
+  --surface: #ffffff;
+  --ink: #23272e;
+  --muted: #6b7178;
+  --line: #d9ddd8;
+  --grid: #e7eae5;
+  --q: #3f7bd6;        /* 問い：瑠璃 */
+  --d: #1f8a5c;        /* 決定：若竹 */
+  --o: #5c6670;        /* 選択肢 */
+  --gray: #a3a8ae;     /* 選ばなかった案・変更前 */
+  --cmp: #8b5cd6;      /* 比較：菫 */
+  --why: #1f8a5c;      /* 理由 */
+  --pre: #c4850c;      /* 前提：山吹 */
+  --ref: #1f93c7;      /* 参照：空 */
+  --rev: #d94c63;      /* 変更：紅 */
+  --accent: #3f7bd6;
+  --font-display: "Zen Old Mincho", "Yu Mincho", "Hiragino Mincho ProN", serif;
+  --font-body: "Zen Kaku Gothic New", "Hiragino Sans", "Yu Gothic UI", "Meiryo", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #15181c; --surface: #1d2126; --ink: #e6e8ea; --muted: #9aa1a8; --line: #343a41; --grid: #1f2328;
+    --q: #6e9fe8; --d: #4cc08b; --o: #a3adb7; --gray: #6b7178; --cmp: #a888e6; --why: #4cc08b; --pre: #e0a535;
+    --ref: #4fb4e0; --rev: #ec6f83; --accent: #6e9fe8; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #15181c; --surface: #1d2126; --ink: #e6e8ea; --muted: #9aa1a8; --line: #343a41; --grid: #1f2328;
+  --q: #6e9fe8; --d: #4cc08b; --o: #a3adb7; --gray: #6b7178; --cmp: #a888e6; --why: #4cc08b; --pre: #e0a535;
+  --ref: #4fb4e0; --rev: #ec6f83; --accent: #6e9fe8; color-scheme: dark;
+}
+html, body { height: 100%; }
+body { background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 14px; line-height: 1.6; }
+button, input, select, textarea { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.app { display: grid; grid-template-rows: auto 1fr; height: 100%; }
+header.top {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px;
+  padding-block: 12px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  border-bottom: 1px solid var(--line); background: var(--surface);
+}
+.brand { font-family: var(--font-display); font-size: 20px; font-weight: 700; letter-spacing: .02em; margin-right: 6px; }
+.brand small { font-family: var(--font-body); font-size: 11px; color: var(--muted); font-weight: 400; margin-left: 8px; letter-spacing: .08em; }
+.ctl { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.ctl label { font-size: 11px; color: var(--muted); letter-spacing: .08em; }
+select, input[type="search"] {
+  background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; max-width: 100%;
+}
+#sessionSel { max-width: 280px; }
+.tabs { display: flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.tabs button { background: none; border: 0; padding: 5px 12px; cursor: pointer; color: var(--muted); }
+.tabs button[aria-pressed="true"] { background: var(--ink); color: var(--surface); }
+.search { position: relative; margin-left: auto; }
+#search { width: 220px; }
+.results {
+  position: absolute; right: 0; top: calc(100% + 4px); width: min(320px, 86vw); max-height: 320px; overflow: auto; z-index: 20;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 24px rgb(0 0 0 / .12);
+}
+.results button { display: block; width: 100%; text-align: left; background: none; border: 0; padding: 8px 12px; cursor: pointer; }
+.results button:hover, .results button:focus-visible { background: var(--bg); }
+.results .def { display: block; font-size: 12px; color: var(--muted); }
+
+main { display: grid; grid-template-columns: 1fr 360px; min-height: 0; }
+.stage { position: relative; overflow: auto; min-width: 0;
+  background-image: linear-gradient(var(--grid) 1px, transparent 1px), linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+  background-size: 24px 24px; }
+.canvas { position: relative; }
+.canvas svg { position: absolute; inset: 0; overflow: visible; pointer-events: none; }
+.node {
+  position: absolute; width: 212px; height: 86px; box-sizing: border-box; padding: 7px 10px 6px 12px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 8px; cursor: pointer; text-align: left;
+  display: flex; flex-direction: column; gap: 2px; overflow: hidden;
+}
+.node:hover { border-color: var(--muted); }
+.node.sel { box-shadow: 0 0 0 2px var(--accent); }
+.node .kind { font-size: 10px; letter-spacing: .1em; color: var(--muted); display: flex; gap: 6px; align-items: center; }
+.node .kind i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; display: inline-block; }
+.node .label { font-weight: 500; font-size: 13px; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.node.question { border-color: color-mix(in srgb, var(--q) 55%, transparent); }
+.node.question .kind { color: var(--q); }
+.node.decision { background: color-mix(in srgb, var(--d) 9%, var(--surface)); border-color: color-mix(in srgb, var(--d) 55%, transparent); }
+.node.decision .kind { color: var(--d); }
+.node.option .kind { color: var(--o); }
+.node.off { background: var(--bg); border-style: dashed; color: var(--gray); }
+.node.off .kind { color: var(--gray); }
+.node.superseded .label { text-decoration: line-through; }
+.node .terms { display: flex; gap: 4px; overflow: hidden; margin-top: auto; }
+.chip { font-size: 10.5px; padding: 0 6px; border-radius: 999px; border: 1px solid var(--line); background: var(--bg); color: var(--muted); white-space: nowrap; cursor: pointer; }
+.chip:hover { color: var(--ink); border-color: var(--muted); }
+.xref { position: absolute; font-size: 10.5px; padding: 1px 7px; border-radius: 999px; cursor: pointer; white-space: nowrap; max-width: 210px; overflow: hidden; text-overflow: ellipsis;
+  background: color-mix(in srgb, var(--ref) 12%, var(--surface)); border: 1px dashed var(--ref); color: var(--ref); }
+.elabel { position: absolute; transform: translate(-50%, -50%); font-size: 10px; padding: 0 5px; border-radius: 4px; background: var(--surface); border: 1px solid currentColor; white-space: nowrap; pointer-events: none; }
+
+.panel { border-left: 1px solid var(--line); background: var(--surface); overflow: auto; min-width: 0;
+  padding-block: 16px 32px; padding-left: 18px; padding-right: max(18px, env(safe-area-inset-right, 0px)); }
+.panel h2 { font-family: var(--font-display); font-size: 19px; line-height: 1.4; margin: 4px 0 6px; text-wrap: balance; }
+.panel h3 { font-size: 11px; letter-spacing: .1em; color: var(--muted); font-weight: 500; margin: 18px 0 6px; }
+.panel p { margin: 0 0 8px; }
+.eyebrow { font-size: 11px; letter-spacing: .1em; color: var(--muted); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 12px 0; }
+.tile { border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; }
+.tile b { display: block; font-family: var(--font-mono); font-size: 22px; font-variant-numeric: tabular-nums; }
+.tile span { font-size: 11px; color: var(--muted); }
+.legend { display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; font-size: 12px; align-items: center; }
+.legend svg { display: block; }
+.list { display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.linkbtn { background: none; border: 0; padding: 2px 0; color: var(--accent); cursor: pointer; text-align: left; }
+.linkbtn:hover { text-decoration: underline; }
+.linkbtn small { color: var(--muted); }
+.src { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; padding: 1px 8px; border-radius: 999px; border: 1px solid; }
+.src.web { color: var(--d); }
+.src.claude { color: var(--pre); }
+textarea { width: 100%; box-sizing: border-box; min-height: 84px; resize: vertical; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 8px; }
+.savestate { font-size: 11px; color: var(--muted); min-height: 1.4em; }
+.more { margin-top: 10px; background: none; border: 1px solid var(--line); border-radius: 6px; padding: 4px 12px; cursor: pointer; }
+.back { background: none; border: 0; color: var(--muted); cursor: pointer; padding: 0; font-size: 12px; }
+.empty { padding: 48px 24px; max-width: 46ch; color: var(--muted); }
+.empty h2 { font-family: var(--font-display); color: var(--ink); font-size: 20px; margin: 0 0 8px; }
+.empty code { font-family: var(--font-mono); font-size: 12px; background: var(--surface); border: 1px solid var(--line); padding: 1px 5px; border-radius: 4px; color: var(--ink); }
+.note { font-size: 12px; color: var(--muted); padding: 6px 16px; }
+
+/* 用語集 */
+.glossary { padding-block: 16px 32px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: 16px; display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; align-content: start; }
+.gcard { text-align: left; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; cursor: pointer; }
+.gcard:hover { border-color: var(--muted); }
+.gcard b { display: block; font-size: 14px; }
+.gcard span { font-size: 12px; color: var(--muted); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+
+/* 縦ツリー（狭い幅） */
+.vtree { display: none; padding-block: 12px 24px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+.vtree ul { list-style: none; margin: 0; padding: 0 0 0 14px; border-left: 1px solid var(--line); }
+.vtree > ul { border-left: 0; padding-left: 0; }
+.vtree li { margin: 6px 0; }
+.vtree .node { position: static; width: 100%; height: auto; }
+.vtree .node .label { -webkit-line-clamp: 3; }
+.vtree .xrefs { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.vtree .xref { position: static; }
+
+@media (max-width: 760px) {
+  main { grid-template-columns: 1fr; grid-template-rows: auto auto; overflow: auto; }
+  .stage { overflow: visible; background-image: none; }
+  .canvas { display: none; }
+  .vtree { display: block; }
+  .panel { border-left: 0; border-top: 1px solid var(--line); padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  .search { margin-left: 0; width: 100%; }
+  #search { width: 100%; box-sizing: border-box; }
+  #sessionSel { max-width: 100%; }
+  .ctl { flex: 1 1 auto; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .stage { scroll-behavior: smooth; }
+}
+</style>
+
+<div class="app">
+  <header class="top">
+    <div class="brand">thinkmap<small>思考の地図</small></div>
+    <div class="ctl"><label for="folderSel">フォルダ</label><select id="folderSel"></select></div>
+    <div class="ctl"><label for="sessionSel">セッション</label><select id="sessionSel"></select></div>
+    <div class="tabs" role="group" aria-label="表示">
+      <button id="tabMap" type="button" aria-pressed="true">マップ</button>
+      <button id="tabTerms" type="button" aria-pressed="false">用語集</button>
+    </div>
+    <div class="search">
+      <input id="search" type="search" placeholder="用語を検索" autocomplete="off" aria-label="用語を検索">
+      <div id="results" class="results" hidden></div>
+    </div>
+  </header>
+  <main>
+    <section class="stage" id="stage" aria-label="マップ">
+      <div class="empty" id="loading"><h2>読み込み中</h2><p>保存済みのマップを読んでいます。</p></div>
+    </section>
+    <aside class="panel" id="panel" aria-live="polite"></aside>
+  </main>
+</div>
+
+<script>
+(() => {
+  'use strict';
+  const UNSORTED = '未分類';
+  const KIND_LABEL = { question: '問い', option: '選択肢', decision: '決定', superseded: '変更前の決定' };
+  const EDGE = {
+    derived: { label: '派生', color: 'var(--muted)', dash: '' },
+    compared: { label: '比較', color: 'var(--cmp)', dash: '5 4' },
+    reason: { label: '理由', color: 'var(--why)', dash: '5 4' },
+    premise: { label: '前提', color: 'var(--pre)', dash: '5 4' },
+    reference: { label: '参照', color: 'var(--ref)', dash: '2 4' },
+    revised: { label: '変更', color: 'var(--rev)', dash: '5 4' },
+  };
+  const NODE_W = 212, NODE_H = 86, COL = 272, ROW = 108, PAD = 40;
+
+  const S = {
+    db: null, sessions: new Map(), terms: new Map(), memos: new Map(), current: null,
+    folder: null, sessionId: null, view: 'map', sel: null, loaded: { s: false, t: false },
+    termOpen: new Set(), userPicked: false,
+  };
+
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const folderOf = s => s.folder || UNSORTED;
+  const fmt = iso => {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (isNaN(d)) return '';
+    return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  };
+  const isOff = n => n.status === 'rejected' || n.status === 'superseded' || n.kind === 'superseded';
+  const nodeClass = n => {
+    const kind = n.kind === 'superseded' ? 'decision' : n.kind;
+    return `${kind}${isOff(n) ? ' off' : ''}${n.status === 'superseded' || n.kind === 'superseded' ? ' superseded' : ''}`;
+  };
+  const kindText = n => n.kind === 'superseded' || n.status === 'superseded' ? '変更前の決定'
+    : n.status === 'rejected' ? `${KIND_LABEL[n.kind] || n.kind}（選ばなかった）` : (KIND_LABEL[n.kind] || n.kind);
+  const memoKey = (type, ...ids) => `${type}--${ids.join('--')}`.replace(/[^A-Za-z0-9_\-.~:@+]/g, '_').slice(0, 200);
+
+  // ---------- 状態の選択 ----------
+  function sessionsSorted() {
+    return [...S.sessions.values()].sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
+  }
+  function folders() {
+    const set = new Set(sessionsSorted().map(folderOf));
+    return [...set];
+  }
+  function pickInitial() {
+    if (S.userPicked || S.sessions.size === 0) return;
+    const h = decodeURIComponent(location.hash.replace(/^#/, ''));
+    let sid = h.startsWith('s-') ? h.slice(2) : null;
+    if (!sid || !S.sessions.has(sid)) sid = S.current && S.sessions.has(S.current.sessionId) ? S.current.sessionId : null;
+    if (!sid) sid = sessionsSorted()[0].id;
+    S.sessionId = sid;
+    S.folder = folderOf(S.sessions.get(sid));
+  }
+  function visibleSessions() {
+    return sessionsSorted().filter(s => S.folder === '*' || folderOf(s) === S.folder);
+  }
+  function goSession(sid, nodeId) {
+    const s = S.sessions.get(sid);
+    if (!s) return;
+    S.userPicked = true;
+    if (S.folder !== '*') S.folder = folderOf(s);
+    S.sessionId = sid;
+    S.view = 'map';
+    S.sel = nodeId ? { type: 'node', id: nodeId } : null;
+    try { history.replaceState(null, '', `#s-${sid}`); } catch {}
+    render();
+    if (nodeId) requestAnimationFrame(() => {
+      const el = document.querySelector(`[data-node="${CSS.escape(nodeId)}"]`);
+      if (el) el.scrollIntoView({ block: 'center', inline: 'center' });
+    });
+  }
+
+  // ---------- ヘッダー ----------
+  function renderHeader() {
+    const fs = folders();
+    const fsel = $('folderSel');
+    fsel.innerHTML = fs.map(f => `<option value="${esc(f)}">${esc(f)}</option>`).join('') + `<option value="*">すべてのフォルダ</option>`;
+    if (S.folder) fsel.value = S.folder;
+    const ssel = $('sessionSel');
+    const vs = visibleSessions();
+    ssel.innerHTML = vs.length ? vs.map(s => `<option value="${esc(s.id)}">${esc(S.folder === '*' ? `[${folderOf(s)}] ` : '')}${esc(s.title || '（無題）')}  ${esc(fmt(s.updatedAt))}</option>`).join('') : '<option value="">（なし）</option>';
+    if (S.sessionId && vs.some(s => s.id === S.sessionId)) ssel.value = S.sessionId;
+    $('tabMap').setAttribute('aria-pressed', String(S.view === 'map'));
+    $('tabTerms').setAttribute('aria-pressed', String(S.view === 'terms'));
+    ssel.disabled = S.view !== 'map';
+  }
+
+  // ---------- 地図のレイアウト ----------
+  function layout(session) {
+    const nodes = (session.nodes || []).slice().sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    const byId = new Map(nodes.map(n => [n.id, n]));
+    const kids = new Map();
+    const roots = [];
+    for (const n of nodes) {
+      if (n.parent && byId.has(n.parent) && n.parent !== n.id) {
+        if (!kids.has(n.parent)) kids.set(n.parent, []);
+        kids.get(n.parent).push(n);
+      } else roots.push(n);
+    }
+    const pos = new Map();
+    let leaf = 0;
+    const seen = new Set();
+    const place = (n, depth) => {
+      if (seen.has(n.id)) return null;
+      seen.add(n.id);
+      const cs = (kids.get(n.id) || []).map(c => place(c, depth + 1)).filter(v => v !== null);
+      const y = cs.length ? (cs[0] + cs[cs.length - 1]) / 2 : leaf++;
+      pos.set(n.id, { x: depth, y });
+      return y;
+    };
+    for (const r of roots) { place(r, 0); leaf += 0.35; }
+    for (const n of nodes) if (!pos.has(n.id)) { pos.set(n.id, { x: 0, y: leaf++ }); }
+    let maxX = 0, maxY = 0;
+    for (const p of pos.values()) { maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y); }
+    return { nodes, byId, kids, roots, pos, w: PAD * 2 + maxX * COL + NODE_W + 160, h: PAD * 2 + maxY * ROW + NODE_H + 30 };
+  }
+  const px = p => ({ x: PAD + p.x * COL, y: PAD + p.y * ROW });
+
+  function incomingRefs(sid) {
+    const out = [];
+    for (const s of S.sessions.values()) {
+      if (s.id === sid) continue;
+      for (const e of s.edges || []) if (e.kind === 'reference' && e.toSession === sid) out.push({ from: s, edge: e });
+    }
+    return out;
+  }
+  function nodeLabel(sid, nid) {
+    const s = S.sessions.get(sid);
+    const n = s && (s.nodes || []).find(x => x.id === nid);
+    return n ? n.label : nid;
+  }
+
+  function termChips(n, limit) {
+    const ids = (n.terms || []).filter(id => S.terms.has(id));
+    const shown = ids.slice(0, limit);
+    return shown.map(id => `<span class="chip" role="button" tabindex="0" data-term="${esc(id)}">${esc(S.terms.get(id).name)}</span>`).join('')
+      + (ids.length > shown.length ? `<span class="chip">+${ids.length - shown.length}</span>` : '');
+  }
+  function nodeHtml(n, style) {
+    const sel = S.sel && S.sel.type === 'node' && S.sel.id === n.id ? ' sel' : '';
+    return `<button type="button" class="node ${nodeClass(n)}${sel}" data-node="${esc(n.id)}" ${style ? `style="${style}"` : ''}>
+      <span class="kind"><i></i>${esc(kindText(n))}</span>
+      <span class="label">${esc(n.label)}</span>
+      <span class="terms">${termChips(n, 3)}</span></button>`;
+  }
+
+  function renderMap(session) {
+    const L = layout(session);
+    const sid = session.id;
+    const paths = [], labels = [], xrefs = [];
+    const curve = (a, b) => {
+      const dx = Math.max(40, Math.abs(b.x - a.x) / 2);
+      return `M${a.x},${a.y} C${a.x + dx},${a.y} ${b.x - dx},${b.y} ${b.x},${b.y}`;
+    };
+    // 親子（実線の流れ）
+    for (const n of L.nodes) {
+      if (!n.parent || !L.byId.has(n.parent)) continue;
+      const p = px(L.pos.get(n.parent)), c = px(L.pos.get(n.id));
+      const kind = EDGE[n.parentKind] ? n.parentKind : 'derived';
+      const off = isOff(n);
+      const color = off ? 'var(--gray)' : (kind === 'derived' ? 'var(--muted)' : EDGE[kind].color);
+      const a = { x: p.x + NODE_W, y: p.y + NODE_H / 2 }, b = { x: c.x, y: c.y + NODE_H / 2 };
+      paths.push(`<path d="${curve(a, b)}" fill="none" stroke="${color}" stroke-width="1.5" ${off ? 'stroke-dasharray="3 3"' : ''} marker-end="url(#arrow)" style="color:${color}"/>`);
+      if (kind !== 'derived') labels.push(`<span class="elabel" style="left:${(a.x + b.x) / 2}px;top:${(a.y + b.y) / 2}px;color:${color}">${esc(EDGE[kind].label)}</span>`);
+    }
+    // 枝をまたぐ線（点線の曲線）
+    const xrefCount = new Map();
+    for (const e of session.edges || []) {
+      const kind = EDGE[e.kind] ? e.kind : 'compared';
+      if (kind === 'reference' || (e.toSession && e.toSession !== sid)) {
+        const from = L.pos.get(e.from);
+        if (!from) continue;
+        const k = (xrefCount.get(e.from) || 0); xrefCount.set(e.from, k + 1);
+        const f = px(from);
+        const ts = S.sessions.get(e.toSession);
+        const title = ts ? `${folderOf(ts)}：${nodeLabel(e.toSession, e.to)}` : '別セッション';
+        xrefs.push(`<button type="button" class="xref" data-jump="${esc(e.toSession || '')}" data-jnode="${esc(e.to)}" style="left:${f.x + NODE_W + 10}px;top:${f.y + 4 + k * 22}px" title="参照：${esc(title)}">↗ ${esc(title)}</button>`);
+        continue;
+      }
+      const A = L.pos.get(e.from), B = L.pos.get(e.to);
+      if (!A || !B) continue;
+      const a0 = px(A), b0 = px(B);
+      let a, b, d;
+      if (A.x === B.x) {
+        // 同じ列：右側にふくらませる
+        a = { x: a0.x + NODE_W, y: a0.y + NODE_H / 2 }; b = { x: b0.x + NODE_W, y: b0.y + NODE_H / 2 };
+        const bulge = 46 + Math.abs(a.y - b.y) * 0.12;
+        d = `M${a.x},${a.y} C${a.x + bulge},${a.y} ${b.x + bulge},${b.y} ${b.x},${b.y}`;
+      } else {
+        const lr = A.x < B.x;
+        a = { x: a0.x + (lr ? NODE_W : 0), y: a0.y + NODE_H / 2 + 10 }; b = { x: b0.x + (lr ? 0 : NODE_W), y: b0.y + NODE_H / 2 + 10 };
+        const dx = Math.max(50, Math.abs(b.x - a.x) / 2) * (lr ? 1 : -1);
+        d = `M${a.x},${a.y} C${a.x + dx},${a.y} ${b.x - dx},${b.y} ${b.x},${b.y}`;
+      }
+      const ed = EDGE[kind];
+      paths.push(`<path d="${d}" fill="none" stroke="${ed.color}" stroke-width="1.4" stroke-dasharray="${ed.dash}" marker-end="url(#arrow)" style="color:${ed.color}"/>`);
+      const mx = A.x === B.x ? a.x + 40 : (a.x + b.x) / 2;
+      labels.push(`<span class="elabel" style="left:${mx}px;top:${(a.y + b.y) / 2}px;color:${ed.color}">${esc(ed.label)}</span>`);
+    }
+    // 他のセッションからの参照
+    const inc = incomingRefs(sid);
+    for (const { from, edge } of inc) {
+      const to = L.pos.get(edge.to);
+      if (!to) continue;
+      const t = px(to);
+      const k = (xrefCount.get(edge.to) || 0); xrefCount.set(edge.to, k + 1);
+      xrefs.push(`<button type="button" class="xref" data-jump="${esc(from.id)}" data-jnode="${esc(edge.from)}" style="left:${t.x + NODE_W + 10}px;top:${t.y + 4 + k * 22}px" title="参照元：${esc(folderOf(from))}">↙ ${esc(folderOf(from))}：${esc(nodeLabel(from.id, edge.from))}</button>`);
+    }
+
+    const nodesHtml = L.nodes.map(n => { const p = px(L.pos.get(n.id)); return nodeHtml(n, `left:${p.x}px;top:${p.y}px`); }).join('');
+    const canvas = `<div class="canvas" style="width:${L.w}px;height:${L.h}px">
+      <svg width="${L.w}" height="${L.h}" aria-hidden="true"><defs><marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L8,4 L0,8 z" fill="context-stroke"/></marker></defs>${paths.join('')}</svg>
+      ${nodesHtml}${labels.join('')}${xrefs.join('')}</div>`;
+
+    // 縦ツリー
+    const xrefsOf = n => {
+      const out = [];
+      for (const e of session.edges || []) {
+        if (e.from !== n.id && e.to !== n.id) continue;
+        const kind = EDGE[e.kind] ? e.kind : 'compared';
+        if (kind === 'reference' || (e.toSession && e.toSession !== sid)) {
+          if (e.from !== n.id) continue;
+          const ts = S.sessions.get(e.toSession);
+          out.push(`<button type="button" class="xref" data-jump="${esc(e.toSession || '')}" data-jnode="${esc(e.to)}">↗ ${esc(ts ? folderOf(ts) : '別セッション')}：${esc(nodeLabel(e.toSession, e.to))}</button>`);
+        } else {
+          const other = e.from === n.id ? e.to : e.from;
+          if (!L.byId.has(other)) continue;
+          out.push(`<span class="chip" role="button" tabindex="0" data-goto="${esc(other)}" style="color:${EDGE[kind].color};border-color:currentColor">${esc(EDGE[kind].label)} ${e.from === n.id ? '→' : '←'} ${esc(L.byId.get(other).label)}</span>`);
+        }
+      }
+      for (const { from, edge } of inc) if (edge.to === n.id) out.push(`<button type="button" class="xref" data-jump="${esc(from.id)}" data-jnode="${esc(edge.from)}">↙ ${esc(folderOf(from))}：${esc(nodeLabel(from.id, edge.from))}</button>`);
+      return out.length ? `<div class="xrefs">${out.join('')}</div>` : '';
+    };
+    const seen = new Set();
+    const tree = n => {
+      if (seen.has(n.id)) return '';
+      seen.add(n.id);
+      const cs = L.kids.get(n.id) || [];
+      return `<li>${nodeHtml(n)}${xrefsOf(n)}${cs.length ? `<ul>${cs.map(tree).join('')}</ul>` : ''}</li>`;
+    };
+    const vtree = `<div class="vtree"><ul>${L.roots.map(tree).join('')}${L.nodes.filter(n => !seen.has(n.id)).map(tree).join('')}</ul></div>`;
+    return canvas + vtree;
+  }
+
+  // ---------- 用語集 ----------
+  function termsInScope() {
+    const all = [...S.terms.values()];
+    const list = S.folder === '*' ? all : all.filter(t => (t.occurrences || []).some(o => (o.folder || UNSORTED) === S.folder));
+    return list.sort((a, b) => String(a.name).localeCompare(String(b.name), 'ja'));
+  }
+  function renderGlossary() {
+    const list = termsInScope();
+    if (!list.length) return `<div class="empty"><h2>用語はまだありません</h2><p>${S.folder === '*' ? '' : `「${esc(S.folder)}」で`}「○○について教えて」と聞いた言葉が、<code>/thinkmap</code> のあとここに並びます。</p></div>`;
+    return `<div class="glossary">${list.map(t => `<button type="button" class="gcard" data-term="${esc(t.id)}"><b>${esc(t.name)}</b><span>${esc(t.definition)}</span></button>`).join('')}</div>`;
+  }
+
+  // ---------- 右パネル ----------
+  function legendHtml() {
+    const row = (k) => `<svg width="38" height="10"><path d="M1,5 L37,5" stroke="${EDGE[k].color}" stroke-width="1.6" stroke-dasharray="${EDGE[k].dash}" fill="none"/></svg><span>${EDGE[k].label}</span>`;
+    return `<div class="legend">${['derived', 'compared', 'reason', 'premise', 'revised', 'reference'].map(row).join('')}</div>`;
+  }
+  function memoHtml(key) {
+    const m = S.memos.get(key);
+    return `<h3>自分のメモ</h3><textarea id="memo" data-key="${esc(key)}" placeholder="ここに書いた内容は再解析しても消えません">${esc(m ? m.text : '')}</textarea><div class="savestate" id="savestate">${m && m.updatedAt ? `保存済み ${esc(fmt(m.updatedAt))}` : ''}</div>`;
+  }
+  function panelSession(s) {
+    const nodes = s.nodes || [];
+    const q = nodes.filter(n => n.kind === 'question').length;
+    const d = nodes.filter(n => n.kind === 'decision' && !isOff(n)).length;
+    const terms = new Set(nodes.flatMap(n => n.terms || []));
+    const decisions = nodes.filter(n => n.kind === 'decision' || n.kind === 'superseded');
+    return `<div class="eyebrow"><span>${esc(folderOf(s))}</span><span>更新 ${esc(fmt(s.updatedAt))}</span></div>
+      <h2>${esc(s.title || '（無題）')}</h2>
+      ${s.summary ? `<p>${esc(s.summary)}</p>` : ''}
+      <div class="tiles"><div class="tile"><b>${q}</b><span>問い</span></div><div class="tile"><b>${d}</b><span>決定</span></div><div class="tile"><b>${terms.size}</b><span>用語</span></div></div>
+      ${decisions.length ? `<h3>決定</h3><ul class="list">${decisions.map(n => `<li><button type="button" class="linkbtn" data-goto="${esc(n.id)}" style="${isOff(n) ? 'text-decoration:line-through;color:var(--gray)' : ''}">${esc(n.label)}</button></li>`).join('')}</ul>` : ''}
+      <h3>線の種類</h3>${legendHtml()}
+      <p class="note" style="padding:12px 0 0">論点を押すと詳しい中身、用語を押すと用語カードがここに開きます。</p>`;
+  }
+  function panelNode(s, n) {
+    const L = new Map((s.nodes || []).map(x => [x.id, x]));
+    const rel = [];
+    if (n.parent && L.has(n.parent)) rel.push({ kind: n.parentKind || 'derived', dir: '←', id: n.parent });
+    for (const c of s.nodes || []) if (c.parent === n.id) rel.push({ kind: c.parentKind || 'derived', dir: '→', id: c.id });
+    for (const e of s.edges || []) {
+      if (e.toSession && e.toSession !== s.id) { if (e.from === n.id) rel.push({ kind: 'reference', dir: '→', id: e.to, sid: e.toSession }); continue; }
+      if (e.from === n.id) rel.push({ kind: e.kind, dir: '→', id: e.to });
+      else if (e.to === n.id) rel.push({ kind: e.kind, dir: '←', id: e.from });
+    }
+    for (const { from, edge } of incomingRefs(s.id)) if (edge.to === n.id) rel.push({ kind: 'reference', dir: '←', id: edge.from, sid: from.id });
+    const terms = (n.terms || []).filter(id => S.terms.has(id));
+    return `<button type="button" class="back" data-back>← このセッションの概要</button>
+      <div class="eyebrow" style="margin-top:10px"><span style="color:var(--${n.kind === 'question' ? 'q' : n.kind === 'decision' && !isOff(n) ? 'd' : 'muted'})">${esc(kindText(n))}</span></div>
+      <h2 style="${n.status === 'superseded' || n.kind === 'superseded' ? 'text-decoration:line-through;color:var(--gray)' : ''}">${esc(n.label)}</h2>
+      ${n.detail ? `<p>${esc(n.detail)}</p>` : ''}
+      ${terms.length ? `<h3>用語</h3><div style="display:flex;flex-wrap:wrap;gap:6px">${terms.map(id => `<span class="chip" role="button" tabindex="0" data-term="${esc(id)}">${esc(S.terms.get(id).name)}</span>`).join('')}</div>` : ''}
+      ${rel.length ? `<h3>つながり</h3><ul class="list">${rel.map(r => {
+        const ed = EDGE[r.kind] || EDGE.derived;
+        const lbl = r.sid ? `${folderOf(S.sessions.get(r.sid) || {})}：${nodeLabel(r.sid, r.id)}` : (L.get(r.id) || {}).label || r.id;
+        return `<li><button type="button" class="linkbtn" ${r.sid ? `data-jump="${esc(r.sid)}" data-jnode="${esc(r.id)}"` : `data-goto="${esc(r.id)}"`}><small style="color:${ed.color}">${esc(ed.label)} ${r.dir}</small> ${esc(lbl)}</button></li>`;
+      }).join('')}</ul>` : ''}
+      ${memoHtml(memoKey('n', s.id, n.id))}`;
+  }
+  function panelTerm(t) {
+    const open = S.termOpen.has(t.id);
+    const occ = (t.occurrences || []).filter((o, i, a) => a.findIndex(x => x.sessionId === o.sessionId && x.nodeId === o.nodeId) === i);
+    const src = t.source || {};
+    const urls = Array.isArray(src.urls) ? src.urls.filter(u => /^https?:\/\//.test(u)) : [];
+    const isWeb = src.type === 'web' && urls.length > 0;
+    const list = (arr) => Array.isArray(arr) && arr.length ? arr : null;
+    const explanation = Array.isArray(t.explanation) ? t.explanation : (t.explanation ? [t.explanation] : []);
+    return `<button type="button" class="back" data-back>← 戻る</button>
+      <div class="eyebrow" style="margin-top:10px"><span>用語</span></div>
+      <h2>${esc(t.name)}</h2>
+      <p>${esc(t.definition)}</p>
+      ${t.contextMeaning ? `<h3>自分の文脈での意味</h3><p>${esc(t.contextMeaning)}</p>` : ''}
+      ${occ.length ? `<h3>出てきた場所</h3><ul class="list">${occ.map(o => {
+        const s = S.sessions.get(o.sessionId);
+        return `<li><button type="button" class="linkbtn" data-jump="${esc(o.sessionId)}" data-jnode="${esc(o.nodeId || '')}">${esc(o.folder || UNSORTED)} <small>／ ${esc(s ? s.title : '（未保存のセッション）')}${o.nodeId ? ` ／ ${esc(nodeLabel(o.sessionId, o.nodeId))}` : ''}</small></button></li>`;
+      }).join('')}</ul>` : ''}
+      ${open ? `
+        ${explanation.length ? `<h3>詳しい説明</h3>${explanation.map(p => `<p>${esc(p)}</p>`).join('')}` : ''}
+        ${list(t.examples) ? `<h3>具体例</h3><ul style="margin:0;padding-left:1.2em">${t.examples.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
+        ${list(t.related) ? `<h3>関連用語</h3><div style="display:flex;flex-wrap:wrap;gap:6px">${t.related.map(r => {
+          const rt = S.terms.get(r) || [...S.terms.values()].find(x => x.name === r);
+          return rt ? `<span class="chip" role="button" tabindex="0" data-term="${esc(rt.id)}">${esc(rt.name)}</span>` : `<span class="chip" style="cursor:default">${esc(r)}</span>`;
+        }).join('')}</div>` : ''}
+        <h3>出典</h3>
+        <p><span class="src ${isWeb ? 'web' : 'claude'}">${isWeb ? 'Webで裏付けあり' : 'Claudeの説明（出典なし）'}</span></p>
+        ${isWeb ? `<ul class="list">${urls.map(u => `<li><a class="linkbtn" href="${esc(u)}" target="_blank" rel="noopener noreferrer">${esc(u.replace(/^https?:\/\//, '').slice(0, 60))}</a></li>`).join('')}</ul>` : ''}
+        ${memoHtml(memoKey('t', t.id))}
+      ` : `<button type="button" class="more" data-more="${esc(t.id)}">詳しく</button>`}`;
+  }
+  function renderPanel() {
+    const p = $('panel');
+    const s = S.sessions.get(S.sessionId);
+    if (S.sel && S.sel.type === 'term' && S.terms.has(S.sel.id)) p.innerHTML = panelTerm(S.terms.get(S.sel.id));
+    else if (S.sel && S.sel.type === 'node' && s && (s.nodes || []).some(n => n.id === S.sel.id)) p.innerHTML = panelNode(s, s.nodes.find(n => n.id === S.sel.id));
+    else if (s && S.view === 'map') p.innerHTML = panelSession(s);
+    else p.innerHTML = `<h2>用語集</h2><p>${S.folder === '*' ? 'すべてのフォルダ' : esc(S.folder)}の用語 ${termsInScope().length} 件。カードを押すと中身が開きます。</p><h3>線の種類</h3>${legendHtml()}`;
+    const ta = $('memo');
+    if (ta) bindMemo(ta);
+  }
+
+  // ---------- 全体 ----------
+  function render() {
+    const stage = $('stage');
+    if (!S.loaded.s) return;
+    if (S.sessions.size === 0) {
+      stage.innerHTML = `<div class="empty"><h2>まだマップがありません</h2><p>Claude Code の壁打ちのあとに <code>/thinkmap</code> を送ると、問い・選択肢・決定と用語がここに描かれます。</p></div>`;
+      $('panel').innerHTML = `<h2>thinkmap</h2><p>セッションごとの思考マップと、全セッション共通の用語集を見るページです。</p><h3>線の種類</h3>${legendHtml()}`;
+      renderHeader();
+      return;
+    }
+    pickInitial();
+    if (S.folder !== '*' && !folders().includes(S.folder)) S.folder = folders()[0];
+    const vs = visibleSessions();
+    if (S.view === 'map' && !vs.some(s => s.id === S.sessionId)) S.sessionId = vs[0] ? vs[0].id : null;
+    renderHeader();
+    const scroll = { l: stage.scrollLeft, t: stage.scrollTop };
+    if (S.view === 'terms') stage.innerHTML = renderGlossary();
+    else {
+      const s = S.sessions.get(S.sessionId);
+      stage.innerHTML = s && (s.nodes || []).length ? renderMap(s) : `<div class="empty"><h2>論点がありません</h2><p>このセッションにはまだ論点が保存されていません。</p></div>`;
+    }
+    stage.scrollLeft = scroll.l; stage.scrollTop = scroll.t;
+    renderPanel();
+  }
+
+  // ---------- メモ（ページから DB に書き戻す） ----------
+  let memoTimer = null;
+  function bindMemo(ta) {
+    const save = async () => {
+      clearTimeout(memoTimer); memoTimer = null;
+      const key = ta.dataset.key, text = ta.value;
+      const prev = S.memos.get(key);
+      if ((prev ? prev.text : '') === text) return;
+      const st = $('savestate');
+      if (!S.db) { if (st) st.textContent = 'このビューでは保存できません'; return; }
+      if (st) st.textContent = '保存中…';
+      try {
+        const now = new Date().toISOString();
+        await S.db.collection('memos').doc(key).set({ text, updatedAt: now });
+        S.memos.set(key, { text, updatedAt: now });
+        if (st && st.isConnected) st.textContent = `保存済み ${fmt(now)}`;
+      } catch (e) {
+        if (st && st.isConnected) st.textContent = `保存できませんでした（${e && e.code ? e.code : 'error'}）。もう一度入力すると再試行します`;
+      }
+    };
+    ta.addEventListener('input', () => { clearTimeout(memoTimer); memoTimer = setTimeout(save, 900); const st = $('savestate'); if (st) st.textContent = '編集中…'; });
+    ta.addEventListener('blur', save);
+  }
+
+  // ---------- 検索 ----------
+  function renderResults() {
+    const q = $('search').value.trim().toLowerCase();
+    const box = $('results');
+    if (!q) { box.hidden = true; return; }
+    const hits = [...S.terms.values()].filter(t => [t.name, t.definition, t.contextMeaning].some(v => String(v || '').toLowerCase().includes(q)))
+      .sort((a, b) => (String(a.name).toLowerCase().startsWith(q) ? -1 : 0) - (String(b.name).toLowerCase().startsWith(q) ? -1 : 0)).slice(0, 12);
+    box.innerHTML = hits.length ? hits.map(t => `<button type="button" data-term="${esc(t.id)}">${esc(t.name)}<span class="def">${esc(t.definition)}</span></button>`).join('') : '<div class="note">見つかりません</div>';
+    box.hidden = false;
+  }
+
+  // ---------- イベント ----------
+  document.addEventListener('click', ev => {
+    const t = ev.target.closest('[data-term],[data-node],[data-goto],[data-jump],[data-back],[data-more]');
+    if (!t) { if (!ev.target.closest('.search')) $('results').hidden = true; return; }
+    if (t.dataset.term) {
+      ev.stopPropagation();
+      S.sel = { type: 'term', id: t.dataset.term };
+      $('results').hidden = true;
+      renderPanel();
+      if (matchMedia('(max-width: 760px)').matches) $('panel').scrollIntoView({ block: 'start' });
+      return;
+    }
+    if (t.dataset.jump !== undefined && t.dataset.jump) { goSession(t.dataset.jump, t.dataset.jnode || null); return; }
+    if (t.dataset.node || t.dataset.goto) {
+      S.sel = { type: 'node', id: t.dataset.node || t.dataset.goto };
+      document.querySelectorAll('.node.sel').forEach(el => el.classList.remove('sel'));
+      document.querySelectorAll(`[data-node="${CSS.escape(S.sel.id)}"]`).forEach(el => el.classList.add('sel'));
+      renderPanel();
+      if (t.dataset.goto) { const el = document.querySelector(`.canvas [data-node="${CSS.escape(S.sel.id)}"]`); if (el && el.offsetParent) el.scrollIntoView({ block: 'center', inline: 'center' }); }
+      if (matchMedia('(max-width: 760px)').matches && t.dataset.node) $('panel').scrollIntoView({ block: 'start' });
+      return;
+    }
+    if (t.dataset.back !== undefined) { S.sel = null; document.querySelectorAll('.node.sel').forEach(el => el.classList.remove('sel')); renderPanel(); return; }
+    if (t.dataset.more) { S.termOpen.add(t.dataset.more); renderPanel(); }
+  });
+  document.addEventListener('keydown', ev => {
+    if ((ev.key === 'Enter' || ev.key === ' ') && ev.target.matches('[role="button"]')) { ev.preventDefault(); ev.target.click(); }
+  });
+  $('folderSel').addEventListener('change', e => { S.userPicked = true; S.folder = e.target.value; S.sel = null; const vs = visibleSessions(); if (!vs.some(s => s.id === S.sessionId)) S.sessionId = vs[0] ? vs[0].id : null; render(); });
+  $('sessionSel').addEventListener('change', e => { if (e.target.value) goSession(e.target.value); });
+  $('tabMap').addEventListener('click', () => { S.view = 'map'; S.sel = null; render(); });
+  $('tabTerms').addEventListener('click', () => { S.view = 'terms'; S.sel = null; render(); });
+  $('search').addEventListener('input', renderResults);
+  $('search').addEventListener('focus', renderResults);
+  $('search').addEventListener('keydown', e => {
+    if (e.key === 'Enter') { const b = $('results').querySelector('[data-term]'); if (b) b.click(); }
+    if (e.key === 'Escape') { $('results').hidden = true; }
+  });
+  window.addEventListener('hashchange', () => { const h = location.hash.replace(/^#/, ''); if (h.startsWith('s-') && S.sessions.has(h.slice(2))) goSession(h.slice(2)); });
+
+  // ---------- データベース ----------
+  let rerender = null;
+  const schedule = () => { if (rerender) return; rerender = requestAnimationFrame(() => { rerender = null; if (!(document.activeElement && document.activeElement.id === 'memo')) render(); }); };
+  function showNote(text) {
+    let n = $('dbnote');
+    if (!n) { n = document.createElement('div'); n.id = 'dbnote'; n.className = 'note'; document.querySelector('header.top').after(n); document.querySelector('.app').style.gridTemplateRows = 'auto auto 1fr'; }
+    n.textContent = text;
+  }
+  async function start() {
+    const timer = setTimeout(() => { if (!S.loaded.s) showNote('データベースにまだつながりません。通信状況を確かめてください。'); }, 10000);
+    let db = null;
+    try { db = window.claude && window.claude.use ? await window.claude.use('db') : null; } catch { db = null; }
+    if (!db) {
+      clearTimeout(timer);
+      $('stage').innerHTML = `<div class="empty"><h2>データを読めません</h2><p>このページのデータベースはサインインした持ち主だけが読めます。claude.ai で開き直してください。</p></div>`;
+      $('panel').innerHTML = '';
+      return;
+    }
+    S.db = db;
+    const onErr = e => { clearTimeout(timer); showNote(`読み込みに失敗しました（${e && e.code ? e.code : 'error'}）。ページを開き直してください。`); };
+    db.collection('sessions').onSnapshot(snap => {
+      S.sessions = new Map(snap.docs.filter(d => d.exists).map(d => [d.id, { id: d.id, ...d.data() }]));
+      if (!snap.metadata.fromCache) { S.loaded.s = true; clearTimeout(timer); const n = $('dbnote'); if (n) n.remove(); }
+      else if (snap.size) S.loaded.s = true;
+      schedule();
+    }, onErr);
+    db.collection('terms').onSnapshot(snap => { S.terms = new Map(snap.docs.filter(d => d.exists).map(d => [d.id, { id: d.id, ...d.data() }])); S.loaded.t = true; schedule(); }, onErr);
+    db.collection('memos').onSnapshot(snap => { S.memos = new Map(snap.docs.filter(d => d.exists).map(d => [d.id, d.data()])); schedule(); }, onErr);
+    db.doc('meta/current').onSnapshot(snap => { S.current = snap.exists ? snap.data() : null; schedule(); }, onErr);
+  }
+  start();
+})();
+</script>

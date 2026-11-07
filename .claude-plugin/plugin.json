@@ -1,0 +1,6 @@
+{
+  "name": "thinkmap",
+  "version": "0.1.0",
+  "description": "壁打ちの問い・選択肢・決定と用語を Artifact の思考マップに保存し、ペインに概要を出す（/thinkmap・/thinkview）",
+  "types": "./types/index.d.ts"
+}
