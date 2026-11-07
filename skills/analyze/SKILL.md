@@ -15,7 +15,7 @@ description: kabeucheese の解析手順。今のセッションの会話を見�
 ## 1. 前回のデータを読む
 
 - `get` で `sessions/<sessionId>` を読む。あれば、その `version` を控える（書き込み時の `if_version`）。無ければ新規。
-- `list` で `terms` を全部読む（`query.limit: 1000`）。既存の用語の `id`・`name`・`occurrences`・`version` を控える。
+- `list` で `terms` を全部読む（`query.limit: 1000`）。既存の用語の `id`・`name`・`aliases`・`occurrences`・`review`・`version` を控える。`review` が `pending` の用語は、ユーザーがページや「＋ 追加」で入れて、まだ Claude が確かめていないもの（手順4b）。
 - `get` で `meta/current` を読み、あれば `version` を控える。
 - **前回のセッション**を決める（`folder` が `未分類` のときは決めない）：
   - このセッションの文書がすでにあり、`previousSessionId` が入っていれば、それをそのまま使う（変えない）。
@@ -107,7 +107,20 @@ description: kabeucheese の解析手順。今のセッションの会話を見�
 
 用語のためだけに新しく Web 検索はしない（ユーザーが頼んだときは別）。
 
+**未登録の言葉（候補）**：用語にはしなかったが、会話に出てきて説明があると後で助かりそうな専門用語・略語を、最大10個まで拾う。用語集にすでにあるもの（`name` と `aliases` で照合）と、このセッションで用語にしたものは入れない。各候補は `{ "name", "definition"（40字前後）, "contextMeaning"（この会話での意味を1文）, "nodeId"（出てきた論点の id。無ければ空文字） }`。名前は会話や論点の `detail` に出てきた書き方のまま書く（ページは `detail` の中の同じ文字列に点線を引き、Mod は返答の本文で同じ文字列を探す）。候補は手順5で `candidateTerms` としてセッションの文書に書き、手順6で `candidates` として show に渡す。ユーザーはそこから「＋ 追加」で用語集に入れる。
+
 **既存の用語との照合**：新しく用語を作る前に、手順1で読んだ用語の `name` と `aliases` の全部と見比べる。大文字・小文字、全角・半角、「の」「・」や空白の有無、英語と日本語の言い換えの違いだけなら同じ用語とみなし、既存の id に `occurrences` を足す。今回の書き方が既存の `name` とも `aliases` とも違えば、`aliases` に足す（`update` で配列の全体を書く）。意味が違うもの（同じ名前で別の概念）は別の用語にし、`name` で区別が付くようにする。
+
+## 4b. ユーザーが追加した用語を確かめる
+
+手順1で `review: "pending"` だった用語を、ここで確かめる（ページで Claude を呼べなかったときに残る）。
+
+- **`userText`（ユーザーが書いた説明）は書き換えない**。
+- `userText` があれば、正しいか、足りないところがないかを確かめる。誤りがあれば訂正を、不足があれば補足を `claudeNote` に書き（どこが違うかを具体的に）、`reviewVerdict` を `corrected` か `supplemented` にする。正しく十分なら `claudeNote` は空文字、`reviewVerdict` は `ok`。
+- `userText` が無ければ、一から書き、`reviewVerdict` は `written`、`claudeNote` は空文字。
+- どちらでも、`definition`（空なら）・`explanation`・`examples`・`aliases` を埋め、`review` を `done`、`reviewedAt` と `updatedAt` を `now` にする。`addedBy`・`createdAt`・`userText` には触らない。
+- このセッションの論点にその用語が出てくれば、`occurrences` にこのセッションの分を足し、論点の `terms` にも付ける。
+- 書き込みは `update` で、変えたフィールドだけを `if_version` 付きで。確かでないことは書かない。
 
 ## 5. 書き込む
 
@@ -118,7 +131,7 @@ description: kabeucheese の解析手順。今のセッションの会話を見�
    { "id": "<sessionId>", "folder": "<folder>", "title": "<20字前後のセッション名>",
      "summary": "<このセッションで考えたことを2〜3文>", "startedAt": "<前回の値。新規なら今>",
      "updatedAt": "<今>", "previousSessionId": "<前回のid。無ければ書かない>",
-     "nodes": [...], "edges": [...] }
+     "nodes": [...], "edges": [...], "candidateTerms": [...] }
    ```
    既存なら `if_version` に控えた version を付ける。
    手順3bで前回の文書を書き換えたときは、同じ batch に、前回の文書の `set`（控えた version を `if_version` に）も入れる。
@@ -144,7 +157,8 @@ version の不一致で断られたら、その文書を読み直してから書
     { "kind": "decision", "label": "<この会話で覆した前回の決定>", "superseded": true, "previous": true }
   ],
   "counts": { "questions": 0, "decisions": 0, "terms": 0 },
-  "newTerms": ["このセッションで新しく登録した用語名"]
+  "newTerms": ["このセッションで新しく登録した用語名"],
+  "candidates": [{ "name": "未登録の言葉", "definition": "…", "contextMeaning": "…", "nodeId": "q3" }]
 }
 ```
 

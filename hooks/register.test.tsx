@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { artifactIdOf, findSecret, folderOf, toSummary, UNSORTED } from './register'
+import { artifactIdOf, findSecret, folderOf, normName, termIdOf, toCandidates, toSummary, UNSORTED } from './register'
 
 const PANE = {
   plugin: 'kabeucheese',
@@ -267,4 +267,70 @@ test('未決の問い：ペインに「未決」と出す', async ($, on) => {
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
   expect(await ui.find({ type: 'Text', text: /^未決$/ })).toBeTruthy()
   await ui.unmount()
+})
+
+test('未登録の言葉：候補を整え、id は名前から決まる', () => {
+  const c = toCandidates([
+    { name: 'Artifact DB', definition: 'Artifact のデータベース', nodeId: 'd4' },
+    { name: 'artifact db' },
+    { definition: '名前なし' },
+    'x',
+  ])
+  expect(c.map(x => x.name)).toEqual(['Artifact DB'])
+  expect(termIdOf('Artifact DB')).toBe('artifact-db')
+  expect(termIdOf('冪等性')).toMatch(/^u-[0-9a-z]+$/)
+  expect(termIdOf('冪等性')).toBe(termIdOf('冪 等 性'))
+  expect(normName('ＡＲＴＩＦＡＣＴの DB')).toBe(normName('artifact db'))
+})
+
+const CANDS = [
+  { name: '冪等性', definition: '何度くり返しても結果が同じ性質', contextMeaning: '再解析で論点が増えないこと', nodeId: 'q8' },
+  { name: 'ADR', definition: '設計判断の記録', contextMeaning: '', nodeId: '' },
+]
+
+test('ペイン：未登録の言葉に「＋ 追加」を出し、押すと用語集に入れて一覧から消す', async ($, on) => {
+  const store = new Map<string, unknown>()
+  const writes: any[] = []
+  engine(on, store, [])
+  on('tool.call', (_: unknown, e: any) => {
+    if (e.tool === 'ArtifactData') writes.push(e)
+    return { result: 'ok' }
+  })
+  on('ui.toast', () => ({ value: undefined }))
+  await $.session.start({ cwd: 'C:\Users\me\research', surface: 'desktop', isInteractive: true })
+  await $.tool.call({ tool: 'mcp__kabeucheese__show', title: '再解析', items: [{ kind: 'question', label: '問い' }], candidates: CANDS } as any)
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await ui.find({ type: 'Text', text: /未登録の言葉/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /^冪等性$/ })).toBeTruthy()
+  await ui.press({ key: `pc-add-${termIdOf('冪等性')}` })
+  expect(writes.length).toBe(1)
+  expect(writes[0]).toMatchObject({ action: 'set', collection: 'terms', doc_id: termIdOf('冪等性'), url: 'https://claude.ai/artifact/TEST' })
+  expect(writes[0].data).toMatchObject({ name: '冪等性', review: 'pending', addedBy: 'pick' })
+  expect(writes[0].data.occurrences).toEqual([{ folder: 'jobHunting', sessionId: SID, nodeId: 'q8' }])
+  expect((store.get(`summary:${SID}`) as any).added).toEqual(['冪等性'])
+  await ui.redraw()
+  expect(await ui.find({ type: 'Text', text: /^冪等性$/ })).toBeFalsy()
+  expect(await ui.find({ type: 'Text', text: /^ADR$/ })).toBeTruthy()
+  await ui.unmount()
+})
+
+test('返答の下：その返答に出てきた未登録の言葉だけを並べる', async ($, on) => {
+  engine(on, new Map(), [])
+  // 元の返答の描画（エンジンの代わり）
+  on('ui.render', ($: any, e: any) => {
+    const { Text } = $.ui.resolve(e)
+    return <Text>{String(e.props?.text ?? '')}</Text>
+  })
+  await $.session.start({ cwd: 'C:\Users\me\research', surface: 'desktop', isInteractive: true })
+  await $.tool.call({ tool: 'mcp__kabeucheese__show', title: '再解析', items: [{ kind: 'question', label: '問い' }], candidates: CANDS } as any)
+  const MSG = { plugin: 'kabeucheese', component: 'AssistantMessage', requestId: 'm1' } as const
+  const hit = await $.ui.mount({ ...MSG, props: { text: '同じ解析を2回しても増えない、つまり冪等性がある。', isFirstOfReply: true }, surface: 'desktop' } as any)
+  expect(await hit.find({ type: 'Text', text: /用語集にない言葉/ })).toBeTruthy()
+  expect(await hit.find({ type: 'Text', text: /^冪等性$/ })).toBeTruthy()
+  expect(await hit.find({ type: 'Text', text: /^ADR$/ })).toBeFalsy()
+  await hit.unmount()
+  const miss = await $.ui.mount({ ...MSG, requestId: 'm2', props: { text: '関係のない返答', isFirstOfReply: true }, surface: 'desktop' } as any)
+  expect(await miss.find({ type: 'Text', text: /用語集にない言葉/ })).toBeFalsy()
+  await miss.unmount()
 })

@@ -109,6 +109,28 @@ main { display: grid; grid-template-columns: 1fr 360px; min-height: 0; }
 .node.off .kind { color: var(--gray); }
 .node.superseded .label { text-decoration: line-through; }
 .node.open { border-style: dashed; }
+/* 未登録の言葉：点線の下線。カーソルを合わせる（スマホは押す）と「＋ 追加」が出る */
+.cand { position: relative; border-bottom: 1px dotted var(--pre); cursor: help; outline: none; }
+.cand .candadd { display: none; position: absolute; left: 0; top: 100%; z-index: 6; white-space: nowrap;
+  font-size: 11px; padding: 2px 8px; border-radius: 6px; border: 1px solid var(--pre); background: var(--surface); color: var(--pre); cursor: pointer; box-shadow: 0 4px 12px rgb(0 0 0 / .12); }
+.cand:hover .candadd, .cand:focus-within .candadd, .cand:focus .candadd { display: inline-block; }
+.candchip { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; padding: 1px 4px 1px 8px; border-radius: 999px; border: 1px dashed var(--pre); color: var(--pre); }
+.candchip button { background: none; border: 0; color: inherit; cursor: pointer; padding: 0 4px; font-size: 12px; }
+.gtools { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; }
+.addbtn { background: var(--surface); border: 1px dashed var(--muted); border-radius: 8px; padding: 6px 14px; cursor: pointer; }
+.addbtn:hover { border-color: var(--ink); }
+.badge { display: inline-block; font-size: 10px; padding: 0 6px; border-radius: 999px; border: 1px solid; margin-left: 6px; vertical-align: 2px; font-weight: 400; }
+.badge.user { color: var(--q); }
+.badge.pending { color: var(--pre); }
+.form label { display: block; font-size: 11px; color: var(--muted); letter-spacing: .08em; margin: 12px 0 4px; }
+.form input[type="text"] { width: 100%; box-sizing: border-box; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
+.form .row { display: flex; gap: 8px; margin-top: 12px; }
+.primary { background: var(--ink); color: var(--surface); border: 0; border-radius: 6px; padding: 6px 14px; cursor: pointer; }
+.primary:disabled { opacity: .5; cursor: default; }
+.ghost { background: none; border: 1px solid var(--line); border-radius: 6px; padding: 6px 14px; cursor: pointer; }
+.cnote { border-left: 3px solid var(--pre); padding: 4px 0 4px 10px; background: color-mix(in srgb, var(--pre) 8%, transparent); }
+.cnote.corrected { border-left-color: var(--rev); background: color-mix(in srgb, var(--rev) 8%, transparent); }
+.userbox { border-left: 3px solid var(--q); padding: 4px 0 4px 10px; white-space: pre-wrap; }
 .node .opentag { margin-left: auto; padding: 0 5px; border: 1px solid currentColor; border-radius: 4px; font-size: 9px; letter-spacing: .05em; }
 .node .terms { display: flex; gap: 4px; overflow: hidden; margin-top: auto; }
 .chip { font-size: 10.5px; padding: 0 6px; border-radius: 999px; border: 1px solid var(--line); background: var(--bg); color: var(--muted); white-space: nowrap; cursor: pointer; }
@@ -153,7 +175,7 @@ textarea { width: 100%; box-sizing: border-box; min-height: 84px; resize: vertic
 .gcard { text-align: left; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; cursor: pointer; }
 .gcard:hover { border-color: var(--muted); }
 .gcard b { display: block; font-size: 14px; }
-.gcard span { font-size: 12px; color: var(--muted); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.gcard .gdef { font-size: 12px; color: var(--muted); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 
 /* 縦ツリー（狭い幅） */
 .vtree { display: none; padding-block: 12px 24px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
@@ -232,6 +254,7 @@ textarea { width: 100%; box-sizing: border-box; min-height: 84px; resize: vertic
     db: null, sessions: new Map(), terms: new Map(), memos: new Map(), current: null,
     folder: null, sessionId: null, view: 'map', sel: null, loaded: { s: false, t: false },
     termOpen: new Set(), userPicked: false, zoom: 1,
+    sample: null, reviewing: new Set(), reviewMsg: new Map(),
   };
   // 拡大は 200% まで。縮小は 100% 未満のときだけ、マップ全体がウィンドウに収まる倍率まで
   const ZOOM_MAX = 2, ZOOM_STEP = 1.25;
@@ -253,6 +276,141 @@ textarea { width: 100%; box-sizing: border-box; min-height: 84px; resize: vertic
   };
   // 時刻は書き方（Z と +09:00）が混ざっても正しく並ぶよう、数値にして比べる
   const ts = v => { const t = Date.parse(v || ''); return isNaN(t) ? 0 : t; };
+
+  // ---------- 用語の照合と id（Mod の register.tsx と同じ式） ----------
+  const normName = s => String(s || '').normalize('NFKC').toLowerCase().replace(/[\s・･\-_]/g, '').replace(/の/g, '');
+  function termIdOf(name) {
+    const n = String(name).normalize('NFKC');
+    const ascii = n.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    if (ascii && /^[\x00-\x7f]+$/.test(n)) return ascii.slice(0, 60);
+    let h = 0x811c9dc5;
+    for (const ch of normName(name)) { h ^= ch.codePointAt(0) || 0; h = Math.imul(h, 0x01000193) >>> 0; }
+    return `u-${h.toString(36)}`;
+  }
+  /** 名前か別名が一致する既存の用語 */
+  function findTerm(name) {
+    const k = normName(name);
+    if (!k) return null;
+    for (const t of S.terms.values()) {
+      if (normName(t.name) === k || (Array.isArray(t.aliases) && t.aliases.some(a => normName(a) === k))) return t;
+    }
+    return null;
+  }
+  /** このセッションで会話に出てきた、まだ用語集に無い言葉 */
+  const unregistered = s => (Array.isArray(s && s.candidateTerms) ? s.candidateTerms : []).filter(c => c && c.name && !findTerm(c.name));
+  /** 文の中の未登録の言葉に点線を引き、カーソルを合わせると「＋ 追加」が出るようにする（HTML を返す） */
+  function markCandidates(text, cands) {
+    const src = String(text || '');
+    const ranges = [];
+    // 長い名前から、元の文で最初に出てくる場所を決める（重なる場所は使わない）
+    for (const name of cands.map(c => c.name).filter(Boolean).sort((a, b) => b.length - a.length)) {
+      for (let i = src.indexOf(name); i >= 0; i = src.indexOf(name, i + 1)) {
+        const end = i + name.length;
+        if (ranges.some(r => i < r.end && end > r.start)) continue;
+        ranges.push({ start: i, end, name });
+        break;
+      }
+    }
+    ranges.sort((a, b) => a.start - b.start);
+    let html = '', pos = 0;
+    for (const r of ranges) {
+      html += esc(src.slice(pos, r.start))
+        + `<span class="cand" tabindex="0">${esc(r.name)}<button type="button" class="candadd" data-addcand="${esc(r.name)}">＋ 用語集に追加</button></span>`;
+      pos = r.end;
+    }
+    return html + esc(src.slice(pos));
+  }
+  const candChip = c => `<span class="candchip" title="${esc(c.definition || '')}">${esc(c.name)}<button type="button" data-addcand="${esc(c.name)}" aria-label="${esc(c.name)} を用語集に追加">＋</button></span>`;
+
+  /** 用語を新しく作る。同じ名前（別名を含む）があれば作らずにそれを開く */
+  async function addTerm({ name, userText = '', definition = '', contextMeaning = '', nodeId = '', addedBy }) {
+    name = String(name || '').trim().slice(0, 40);
+    if (!name) return;
+    const dup = findTerm(name);
+    if (dup) { S.sel = { type: 'term', id: dup.id }; S.reviewMsg.set(dup.id, 'すでに用語集にあります。'); renderPanel(); return; }
+    if (!S.db) { alert('このビューでは保存できません。claude.ai で開いてください。'); return; }
+    let id = termIdOf(name);
+    for (let n = 2; S.terms.has(id); n++) id = `${termIdOf(name)}-${n}`;
+    const s = S.sessions.get(S.sessionId);
+    const now = new Date().toISOString();
+    const doc = {
+      name, userText: String(userText || '').trim().slice(0, 2000), definition, contextMeaning,
+      explanation: [], examples: [], related: [], aliases: [],
+      source: { type: addedBy === 'user' ? 'user' : 'claude', urls: [] }, addedBy, review: 'pending',
+      occurrences: s && addedBy === 'pick' ? [{ folder: folderOf(s), sessionId: s.id, nodeId }] : [],
+      createdAt: now, updatedAt: now,
+    };
+    try {
+      await S.db.collection('terms').doc(id).set(doc);
+    } catch (e) {
+      alert(`追加できませんでした（${e && e.code ? e.code : 'error'}）`);
+      return;
+    }
+    S.terms.set(id, { id, ...doc });
+    S.sel = { type: 'term', id };
+    render();
+    reviewTerm(id);
+  }
+
+  const VERDICT = { ok: 'Claude の確認：この説明で正しい', supplemented: 'Claude の補足', corrected: 'Claude の訂正', written: '' };
+  /** Claude に用語の中身を確かめてもらい、誤りや不足があれば追記する。ユーザーが書いた userText は書き換えない */
+  async function reviewTerm(id) {
+    const t = S.terms.get(id);
+    if (!t || S.reviewing.has(id)) return;
+    if (!S.sample) { S.reviewMsg.set(id, '次の /kabemap で Claude が確かめて追記します。'); renderPanel(); return; }
+    S.reviewing.add(id); S.reviewMsg.delete(id); renderPanel();
+    const s = S.sessions.get(S.sessionId);
+    const prompt = [
+      'あなたは個人用の用語集を整える編集者です。次の用語が用語集に追加されました。',
+      `用語：${t.name}`,
+      t.userText ? `ユーザーが書いた説明：\n${t.userText}` : 'ユーザーが書いた説明：なし',
+      !t.userText && t.definition ? `下書きの定義：${t.definition}` : '',
+      t.contextMeaning ? `使われた文脈：${t.contextMeaning}` : '',
+      s ? `持ち主が考えていた話題（フォルダ名）：${folderOf(s)}` : '',
+      '',
+      'やること：',
+      '- ユーザーの説明があれば、正しいか、足りないところがないかを確かめる。ユーザーの文は書き換えない。誤りがあれば訂正を、不足があれば補足を note に書く（どこが違うかを具体的に）。正しく十分なら note は空文字にする。',
+      '- ユーザーの説明が無ければ、一から説明を書き、note は空文字にする。',
+      '- 確かでないことは書かない。',
+      '- 簡潔な日本語で書く（文末は「〜する」「〜のこと」など）。',
+      '',
+      '次の形の JSON だけを返す：',
+      '{"verdict":"ok か supplemented か corrected か written","note":"ユーザーの説明への補足・訂正","definition":"40字前後のひとこと定義","explanation":["段落を2〜3個"],"examples":["具体例を1〜3個"],"aliases":["英語名・略称・別の書き方。無ければ空の配列"]}',
+    ].filter(Boolean).join('\n');
+    const list = (v, n) => (Array.isArray(v) ? v.map(x => String(x).trim()).filter(Boolean).slice(0, n) : []);
+    try {
+      const r = await S.sample.json(prompt);
+      const verdict = ['ok', 'supplemented', 'corrected', 'written'].includes(r && r.verdict) ? r.verdict : (t.userText ? 'supplemented' : 'written');
+      const cur = S.terms.get(id) || t;
+      const aliases = [...new Set([...(cur.aliases || []), ...list(r && r.aliases, 6)].filter(a => normName(a) !== normName(cur.name)))];
+      const patch = {
+        definition: String((r && r.definition) || cur.definition || '').slice(0, 120),
+        explanation: list(r && r.explanation, 4),
+        examples: list(r && r.examples, 3),
+        aliases,
+        claudeNote: verdict === 'written' || verdict === 'ok' ? '' : String((r && r.note) || '').slice(0, 1200),
+        reviewVerdict: verdict,
+        review: 'done',
+        reviewedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      await S.db.collection('terms').doc(id).update(patch);
+      S.terms.set(id, { ...cur, ...patch });
+    } catch (e) {
+      const code = e && e.code;
+      if (code === 'not_granted' || code === 'sampling_disabled' || code === 'not_declared' || code === 'capability_disabled' || code === 'capability_removed') {
+        S.sample = null;
+        S.reviewMsg.set(id, 'Claude に確かめてもらえませんでした。次の /kabemap で Claude が確かめて追記します。');
+      } else if (code === 'rate_limited') {
+        S.reviewMsg.set(id, 'いまは Claude を呼べません。少し時間をおいて「Claude に確かめてもらう」を押してください。');
+      } else if (code !== 'cancelled') {
+        S.reviewMsg.set(id, `確かめられませんでした（${code || 'error'}）。もう一度押すか、次の /kabemap を待ってください。`);
+      }
+    } finally {
+      S.reviewing.delete(id);
+      renderPanel();
+    }
+  }
   const kindText = n => n.kind === 'superseded' || n.status === 'superseded' ? '変更前の決定'
     : n.status === 'rejected' ? `${KIND_LABEL[n.kind] || n.kind}（選ばなかった）` : (KIND_LABEL[n.kind] || n.kind);
   const memoKey = (type, ...ids) => `${type}--${ids.join('--')}`.replace(/[^A-Za-z0-9_\-.~:@+]/g, '_').slice(0, 200);
@@ -483,15 +641,19 @@ textarea { width: 100%; box-sizing: border-box; min-height: 84px; resize: vertic
   }
 
   // ---------- 用語集 ----------
+  const badges = t => (t.addedBy === 'user' ? '<span class="badge user">自分で追加</span>' : '')
+    + (t.review === 'pending' ? '<span class="badge pending">確認待ち</span>' : '');
   function termsInScope() {
     const all = [...S.terms.values()];
-    const list = S.folder === '*' ? all : all.filter(t => (t.occurrences || []).some(o => (o.folder || UNSORTED) === S.folder));
+    // 自分で追加した用語（出てきた場所が無い）はどのフォルダでも見せる
+    const list = S.folder === '*' ? all : all.filter(t => !(t.occurrences || []).length || (t.occurrences || []).some(o => (o.folder || UNSORTED) === S.folder));
     return list.sort((a, b) => String(a.name).localeCompare(String(b.name), 'ja'));
   }
   function renderGlossary() {
     const list = termsInScope();
-    if (!list.length) return `<div class="empty"><h2>用語はまだありません</h2><p>${S.folder === '*' ? '' : `「${esc(S.folder)}」で`}「○○について教えて」と聞いた言葉が、<code>/kabemap</code> のあとここに並びます。</p></div>`;
-    return `<div class="glossary">${list.map(t => `<button type="button" class="gcard" data-term="${esc(t.id)}"><b>${esc(t.name)}</b><span>${esc(t.definition)}</span></button>`).join('')}</div>`;
+    const tools = `<div class="gtools"><button type="button" class="addbtn" data-addterm>＋ 用語を追加</button><span class="note" style="padding:0">自分で書いた説明は Claude が確かめ、誤りや不足があれば追記します。</span></div>`;
+    if (!list.length) return `<div class="glossary">${tools}</div><div class="empty"><h2>用語はまだありません</h2><p>${S.folder === '*' ? '' : `「${esc(S.folder)}」で`}「○○について教えて」と聞いた言葉が、<code>/kabemap</code> のあとここに並びます。上のボタンから自分で足すこともできます。</p></div>`;
+    return `<div class="glossary">${tools}${list.map(t => `<button type="button" class="gcard" data-term="${esc(t.id)}"><b>${esc(t.name)}${badges(t)}</b><span class="gdef">${esc(t.definition || t.userText || '（Claude の確認待ち）')}</span></button>`).join('')}</div>`;
   }
 
   // ---------- 右パネル ----------
@@ -513,6 +675,7 @@ textarea { width: 100%; box-sizing: border-box; min-height: 84px; resize: vertic
     const nexts = [...S.sessions.values()].filter(x => x.previousSessionId === s.id)
       .sort((a, b) => ts(a.updatedAt) - ts(b.updatedAt));
     const opens = nodes.filter(isOpen);
+    const cands = unregistered(s);
     const chainLink = (x, label) => `<li><button type="button" class="linkbtn" data-jump="${esc(x.id)}" data-jnode=""><small style="color:var(--cont)">${label}</small> ${esc(x.title || '（無題）')} <small>${esc(fmt(x.updatedAt))}</small></button></li>`;
     const chain = prev || nexts.length
       ? `<h3>前後のセッション</h3><ul class="list">${prev ? chainLink(prev, '前回 ←') : ''}${nexts.map(x => chainLink(x, '続き →')).join('')}</ul>`
@@ -523,6 +686,7 @@ textarea { width: 100%; box-sizing: border-box; min-height: 84px; resize: vertic
       ${chain}
       <div class="tiles"><div class="tile"><b>${q}</b><span>問い</span></div><div class="tile"><b>${d}</b><span>決定</span></div><div class="tile"><b>${terms.size}</b><span>用語</span></div></div>
       ${decisions.length ? `<h3>決定</h3><ul class="list">${decisions.map(n => `<li><button type="button" class="linkbtn" data-goto="${esc(n.id)}" style="${isOff(n) ? 'text-decoration:line-through;color:var(--gray)' : ''}">${esc(n.label)}</button></li>`).join('')}</ul>` : ''}
+      ${cands.length ? `<h3>会話に出てきた未登録の言葉</h3><div style="display:flex;flex-wrap:wrap;gap:6px">${cands.map(candChip).join('')}</div>` : ''}
       ${opens.length ? `<h3>まだ決めていない問い</h3><ul class="list">${opens.map(n => `<li><button type="button" class="linkbtn" data-goto="${esc(n.id)}">${esc(n.label)}</button></li>`).join('')}</ul>` : ''}
       <h3>線の種類</h3>${legendHtml()}
       <p class="note" style="padding:12px 0 0">論点を押すと詳しい中身、用語を押すと用語カードがここに開きます。</p>`;
@@ -539,17 +703,41 @@ textarea { width: 100%; box-sizing: border-box; min-height: 84px; resize: vertic
     }
     for (const { from, edge } of incomingRefs(s.id)) if (edge.to === n.id) rel.push({ kind: crossKind(edge.kind), dir: '←', id: edge.from, sid: from.id });
     const terms = (n.terms || []).filter(id => S.terms.has(id));
+    const cands = unregistered(s);
+    // 説明文に出てこないが、この論点で拾われた未登録の言葉はチップで出す
+    const extra = cands.filter(c => c.nodeId === n.id && !String(n.detail || '').includes(c.name) && !String(n.label || '').includes(c.name));
     return `<button type="button" class="back" data-back>← このセッションの概要</button>
       <div class="eyebrow" style="margin-top:10px"><span style="color:var(--${n.kind === 'question' ? 'q' : n.kind === 'decision' && !isOff(n) ? 'd' : 'muted'})">${esc(kindText(n))}${isOpen(n) ? '（まだ決めていない）' : ''}</span></div>
       <h2 style="${n.status === 'superseded' || n.kind === 'superseded' ? 'text-decoration:line-through;color:var(--gray)' : ''}">${esc(n.label)}</h2>
-      ${n.detail ? `<p>${esc(n.detail)}</p>` : ''}
+      ${n.detail ? `<p>${markCandidates(n.detail, cands)}</p>` : ''}
       ${terms.length ? `<h3>用語</h3><div style="display:flex;flex-wrap:wrap;gap:6px">${terms.map(id => `<span class="chip" role="button" tabindex="0" data-term="${esc(id)}">${esc(S.terms.get(id).name)}</span>`).join('')}</div>` : ''}
+      ${extra.length ? `<h3>この論点に出てきた未登録の言葉</h3><div style="display:flex;flex-wrap:wrap;gap:6px">${extra.map(candChip).join('')}</div>` : ''}
       ${rel.length ? `<h3>つながり</h3><ul class="list">${rel.map(r => {
         const ed = EDGE[r.kind] || EDGE.derived;
         const lbl = r.sid ? `${folderOf(S.sessions.get(r.sid) || {})}：${nodeLabel(r.sid, r.id)}` : (L.get(r.id) || {}).label || r.id;
         return `<li><button type="button" class="linkbtn" ${r.sid ? `data-jump="${esc(r.sid)}" data-jnode="${esc(r.id)}"` : `data-goto="${esc(r.id)}"`}><small style="color:${ed.color}">${esc(ed.label)} ${r.dir}</small> ${esc(lbl)}</button></li>`;
       }).join('')}</ul>` : ''}
       ${memoHtml(memoKey('n', s.id, n.id))}`;
+  }
+  function reviewHtml(t) {
+    const msg = S.reviewMsg.get(t.id);
+    if (S.reviewing.has(t.id)) return '<p class="savestate">Claude が確かめています…（初めてのときは、Claude を使ってよいかの確認が出ます）</p>';
+    if (t.review !== 'pending') return msg ? `<p class="savestate">${esc(msg)}</p>` : '';
+    return `<p class="savestate">${esc(msg || 'Claude の確認待ちです。')}</p>`
+      + (S.sample ? `<button type="button" class="more" data-review="${esc(t.id)}">Claude に確かめてもらう</button>` : '');
+  }
+  function panelAdd() {
+    return `<button type="button" class="back" data-back>← 戻る</button>
+      <div class="eyebrow" style="margin-top:10px"><span>用語集</span></div>
+      <h2>用語を追加</h2>
+      <div class="form">
+        <label for="newName">用語（必須）</label>
+        <input type="text" id="newName" maxlength="40" autocomplete="off" placeholder="例：冪等性">
+        <label for="newText">意味や内容（任意）</label>
+        <textarea id="newText" maxlength="2000" placeholder="自分の言葉で書いてよい。空でもよい（Claude が一から書く）"></textarea>
+        <div class="row"><button type="button" class="primary" data-submitterm>追加する</button><button type="button" class="ghost" data-back>やめる</button></div>
+        <p class="note" style="padding:10px 0 0">${S.sample ? '追加すると Claude が中身を確かめ、誤りや不足があれば「Claude の追記」として書き足します。自分の文はそのまま残ります。' : 'このビューでは Claude を呼べないので、次の /kabemap で Claude が確かめて追記します。'}</p>
+      </div>`;
   }
   function panelTerm(t) {
     const open = S.termOpen.has(t.id);
@@ -561,8 +749,12 @@ textarea { width: 100%; box-sizing: border-box; min-height: 84px; resize: vertic
     const explanation = Array.isArray(t.explanation) ? t.explanation : (t.explanation ? [t.explanation] : []);
     return `<button type="button" class="back" data-back>← 戻る</button>
       <div class="eyebrow" style="margin-top:10px"><span>用語</span></div>
-      <h2>${esc(t.name)}</h2>
-      <p>${esc(t.definition)}</p>
+      <h2>${esc(t.name)}${badges(t)}</h2>
+      ${t.definition ? `<p>${esc(t.definition)}</p>` : ''}
+      ${t.userText ? `<h3>自分で書いた説明</h3><p class="userbox">${esc(t.userText)}</p>` : ''}
+      ${t.claudeNote ? `<h3>${esc(VERDICT[t.reviewVerdict] || 'Claude の追記')}</h3><p class="cnote ${t.reviewVerdict === 'corrected' ? 'corrected' : ''}">${esc(t.claudeNote)}</p>` : ''}
+      ${!t.claudeNote && t.userText && t.reviewVerdict === 'ok' ? `<p class="note" style="padding:0">${esc(VERDICT.ok)}</p>` : ''}
+      ${reviewHtml(t)}
       ${t.contextMeaning ? `<h3>自分の文脈での意味</h3><p>${esc(t.contextMeaning)}</p>` : ''}
       ${occ.length ? `<h3>出てきた場所</h3><ul class="list">${occ.map(o => {
         const s = S.sessions.get(o.sessionId);
@@ -584,10 +776,15 @@ textarea { width: 100%; box-sizing: border-box; min-height: 84px; resize: vertic
   function renderPanel() {
     const p = $('panel');
     const s = S.sessions.get(S.sessionId);
+    if (S.sel && S.sel.type === 'add') {
+      // 入力中の内容を描き直しで消さない
+      if (!$('newName')) { p.innerHTML = panelAdd(); $('newName').focus(); }
+      return;
+    }
     if (S.sel && S.sel.type === 'term' && S.terms.has(S.sel.id)) p.innerHTML = panelTerm(S.terms.get(S.sel.id));
     else if (S.sel && S.sel.type === 'node' && s && (s.nodes || []).some(n => n.id === S.sel.id)) p.innerHTML = panelNode(s, s.nodes.find(n => n.id === S.sel.id));
     else if (s && S.view === 'map') p.innerHTML = panelSession(s);
-    else p.innerHTML = `<h2>用語集</h2><p>${S.folder === '*' ? 'すべてのフォルダ' : esc(S.folder)}の用語 ${termsInScope().length} 件。カードを押すと中身が開きます。</p><h3>線の種類</h3>${legendHtml()}`;
+    else p.innerHTML = `<h2>用語集</h2><p>${S.folder === '*' ? 'すべてのフォルダ' : esc(S.folder)}の用語 ${termsInScope().length} 件。カードを押すと中身が開きます。</p><button type="button" class="addbtn" data-addterm>＋ 用語を追加</button><h3>線の種類</h3>${legendHtml()}`;
     const ta = $('memo');
     if (ta) bindMemo(ta);
   }
@@ -712,7 +909,7 @@ textarea { width: 100%; box-sizing: border-box; min-height: 84px; resize: vertic
     const q = $('search').value.trim().toLowerCase();
     const box = $('results');
     if (!q) { box.hidden = true; return; }
-    const hits = [...S.terms.values()].filter(t => [t.name, t.definition, t.contextMeaning].some(v => String(v || '').toLowerCase().includes(q)))
+    const hits = [...S.terms.values()].filter(t => [t.name, t.definition, t.contextMeaning, t.userText, ...(Array.isArray(t.aliases) ? t.aliases : [])].some(v => String(v || '').toLowerCase().includes(q)))
       .sort((a, b) => (String(a.name).toLowerCase().startsWith(q) ? -1 : 0) - (String(b.name).toLowerCase().startsWith(q) ? -1 : 0)).slice(0, 12);
     box.innerHTML = hits.length ? hits.map(t => `<button type="button" data-term="${esc(t.id)}">${esc(t.name)}<span class="def">${esc(t.definition)}</span></button>`).join('') : '<div class="note">見つかりません</div>';
     box.hidden = false;
@@ -720,6 +917,22 @@ textarea { width: 100%; box-sizing: border-box; min-height: 84px; resize: vertic
 
   // ---------- イベント ----------
   document.addEventListener('click', ev => {
+    const a = ev.target.closest('[data-addterm],[data-submitterm],[data-addcand],[data-review]');
+    if (a) {
+      ev.stopPropagation();
+      if (a.dataset.addterm !== undefined) { S.sel = { type: 'add' }; renderPanel(); if (matchMedia('(max-width: 760px)').matches) $('panel').scrollIntoView({ block: 'start' }); }
+      else if (a.dataset.submitterm !== undefined) {
+        const name = $('newName').value.trim();
+        if (!name) { $('newName').focus(); return; }
+        a.disabled = true;
+        addTerm({ name, userText: $('newText').value, addedBy: 'user' }).finally(() => { a.disabled = false; });
+      } else if (a.dataset.addcand) {
+        const s = S.sessions.get(S.sessionId);
+        const c = unregistered(s).find(x => x.name === a.dataset.addcand);
+        if (c) addTerm({ name: c.name, definition: c.definition || '', contextMeaning: c.contextMeaning || '', nodeId: c.nodeId || '', addedBy: 'pick' });
+      } else if (a.dataset.review) reviewTerm(a.dataset.review);
+      return;
+    }
     const t = ev.target.closest('[data-term],[data-node],[data-goto],[data-jump],[data-back],[data-more]');
     if (!t) { if (!ev.target.closest('.search')) $('results').hidden = true; return; }
     if (t.dataset.term) {
@@ -777,6 +990,8 @@ textarea { width: 100%; box-sizing: border-box; min-height: 84px; resize: vertic
       return;
     }
     S.db = db;
+    // Claude を呼べる環境なら、用語の確認に使う（呼べなければ確認は次の /kabemap に回す）
+    if (window.claude && window.claude.use) window.claude.use('sample').then(s => { S.sample = s || null; if (S.loaded.s) renderPanel(); }).catch(() => {});
     const onErr = e => { clearTimeout(timer); showNote(`読み込みに失敗しました（${e && e.code ? e.code : 'error'}）。ページを開き直してください。`); };
     db.collection('sessions').onSnapshot(snap => {
       S.sessions = new Map(snap.docs.filter(d => d.exists).map(d => [d.id, { id: d.id, ...d.data() }]));

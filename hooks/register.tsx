@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { Engine, Register } from 'claude-code'
 
-import type { Item, Summary } from '../types'
+import type { Candidate, Item, Summary } from '../types'
 
 import { PALETTE, tilesSvg, tint } from './svg'
 
@@ -175,8 +175,93 @@ export function toSummary(input: Record<string, unknown>, sessionId: string, fol
       terms: num(counts.terms),
     },
     newTerms: (Array.isArray(input.newTerms) ? input.newTerms : []).map(t => str(t, 40)).filter(Boolean).slice(0, 30),
+    candidates: toCandidates(input.candidates),
+    added: [],
     updatedAt: now,
   }
+}
+
+/** show ツールの candidates を整える（名前の無いもの・重複は捨てる） */
+export function toCandidates(raw: unknown): Candidate[] {
+  const seen = new Set<string>()
+  const out: Candidate[] = []
+  for (const it of Array.isArray(raw) ? raw : []) {
+    if (!it || typeof it !== 'object') continue
+    const o = it as Record<string, unknown>
+    const name = str(o.name, 40)
+    const key = normName(name)
+    if (!name || seen.has(key)) continue
+    seen.add(key)
+    out.push({ name, definition: str(o.definition, 120), contextMeaning: str(o.contextMeaning, 200), nodeId: str(o.nodeId, 40) })
+    if (out.length >= 20) break
+  }
+  return out
+}
+
+// ---------------------------------------------------------------------------
+// 用語の id と照合（ページと同じ決め方）
+// ---------------------------------------------------------------------------
+
+/** 照合用に名前をそろえる：全角英数を半角に、大文字を小文字に、空白と「・」「の」の有無を無視 */
+export const normName = (s: string) =>
+  s
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/[\s・･\-_]/g, '')
+    .replace(/の/g, '')
+
+/** 用語の doc id：英数字だけの名前はその綴り、それ以外は名前から決まるハッシュ（ページでも同じ式） */
+export function termIdOf(name: string): string {
+  const ascii = name.normalize('NFKC').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+  if (ascii && /^[\x00-\x7f]+$/.test(name.normalize('NFKC'))) return ascii.slice(0, 60)
+  let h = 0x811c9dc5
+  for (const ch of normName(name)) {
+    h ^= ch.codePointAt(0) ?? 0
+    h = Math.imul(h, 0x01000193) >>> 0
+  }
+  return `u-${h.toString(36)}`
+}
+
+/** 候補のうち、まだ追加していないもの */
+const pendingCandidates = (s: Summary) => {
+  const added = new Set((s.added ?? []).map(normName))
+  return (s.candidates ?? []).filter(c => !added.has(normName(c.name)))
+}
+
+/** 候補を用語集に追加する（ArtifactData で新しい用語を作る）。結果の一文を返す */
+async function addCandidate($: Engine, c: Candidate): Promise<string> {
+  const ctx = await contextOf($)
+  if (!ctx.artifactUrl) return SETUP_TEXT
+  const now = new Date().toISOString()
+  const res = (await $.tool.call({
+    tool: 'ArtifactData',
+    action: 'set',
+    url: ctx.artifactUrl,
+    collection: 'terms',
+    doc_id: termIdOf(c.name),
+    data: {
+      name: c.name,
+      definition: c.definition,
+      contextMeaning: c.contextMeaning,
+      explanation: [],
+      examples: [],
+      related: [],
+      aliases: [],
+      source: { type: 'claude', urls: [] },
+      addedBy: 'pick',
+      review: 'pending',
+      occurrences: [{ folder: ctx.folder, sessionId: ctx.sessionId, nodeId: c.nodeId }],
+      createdAt: now,
+      updatedAt: now,
+    },
+  } as never)) as { deny?: string; isError?: boolean; text?: string }
+  if (res.deny || res.isError) {
+    const why = String(res.deny ?? res.text ?? '').slice(0, 120)
+    return `「${c.name}」を追加できませんでした（すでに用語集にあるか、書き込みが断られました）。${why}`
+  }
+  await update($, summary, s => ({ ...s, added: [...(s.added ?? []), c.name] }))
+  await $.store.set(storeKey(ctx.sessionId), await read($, summary))
+  return `「${c.name}」を用語集に追加しました。詳しい説明は、ページで「Claude に確かめてもらう」を押すか、次の /kabemap で入ります。`
 }
 
 async function loadStored($: Engine): Promise<boolean> {
@@ -260,6 +345,20 @@ export const register: Register = on => {
             },
           },
           newTerms: { type: 'array', items: { type: 'string' }, description: 'このセッションで新しく登録した用語名' },
+          candidates: {
+            type: 'array',
+            description: '会話に出てきたが用語集に無い言葉（登録はしていないもの）。ペインと返答の下に「＋ 追加」付きで出る',
+            items: {
+              type: 'object',
+              properties: {
+                name: { type: 'string' },
+                definition: { type: 'string', description: 'ひとこと定義（40字前後）' },
+                contextMeaning: { type: 'string', description: 'この会話での意味（1文）' },
+                nodeId: { type: 'string', description: '出てきた論点の id' },
+              },
+              required: ['name'],
+            },
+          },
         },
         required: ['title', 'items'],
       },
@@ -330,9 +429,43 @@ export const register: Register = on => {
     }
   })
 
+  // 返答の下に、その返答に出てきた未登録の言葉を並べる。カーソルを合わせると「＋」が出て、押すと用語集に入る
+  on('ui.render', { component: 'AssistantMessage' }, async ($, e, next) => {
+    const drawn = await next(e)
+    const cands = pendingCandidates(await read($, summary))
+    if (!cands.length) return drawn
+    const text = normName(String((e.props as { text?: unknown } | undefined)?.text ?? ''))
+    const hits = cands.filter(c => text.includes(normName(c.name))).slice(0, 6)
+    if (!hits.length) return drawn
+    const { Box, Text, Button } = $.ui.resolve(e)
+    const reveal = e.surface === 'desktop'
+    return (
+      <Box flexDirection="column">
+        {drawn}
+        <Box flexDirection="row" flexWrap="wrap" gap={1} paddingLeft={2}>
+          <Text dimColor>用語集にない言葉：</Text>
+          {hits.map((c, i) => (
+            <Box key={`kc-${i}`} flexDirection="row">
+              <Text color={PALETTE.term}>{c.name}</Text>
+              <Box paddingLeft={1} {...(reveal ? { display: 'none' as const, hover: { display: 'flex' as const } } : {})}>
+                <Button
+                  key={`kc-add-${termIdOf(c.name)}`}
+                  plain
+                  dimColor
+                  label="＋ 追加"
+                  onPress={async () => $.ui.toast(await addCandidate($, c))}
+                />
+              </Box>
+            </Box>
+          ))}
+        </Box>
+      </Box>
+    )
+  })
+
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const els = $.ui.resolve(e)
-    const { Box, Text, Link } = els
+    const { Box, Text, Link, Button } = els
     const Svg = 'Svg' in els ? els.Svg : undefined
     const s = await read($, summary)
     const href = await read($, url)
@@ -373,6 +506,8 @@ export const register: Register = on => {
       )
     }
 
+    const cands = pendingCandidates(s)
+    const reveal = e.surface === 'desktop'
     const current = s.items.filter(it => !it.previous)
     const previous = s.items.filter(it => it.previous)
     const d = new Date(s.updatedAt + 9 * 3_600_000)
@@ -452,6 +587,28 @@ export const register: Register = on => {
                 <Text wrap="wrap" strikethrough dimColor>
                   {it.label}
                 </Text>
+              </Box>
+            ))}
+          </Box>
+        ) : null}
+
+        {cands.length > 0 ? (
+          <Box flexDirection="column">
+            {head('会話に出てきた未登録の言葉', PALETTE.term, `${cands.length}件`)}
+            {cands.map((c, i) => (
+              <Box key={`pc-${i}`} flexDirection="row" gap={1} paddingLeft={2}>
+                <Text color={PALETTE.term}>{c.name}</Text>
+                <Text dimColor wrap="wrap">
+                  {c.definition}
+                </Text>
+                <Box {...(reveal ? { display: 'none' as const, hover: { display: 'flex' as const } } : {})}>
+                  <Button
+                    key={`pc-add-${termIdOf(c.name)}`}
+                    plain
+                    label="＋ 追加"
+                    onPress={async () => $.ui.toast(await addCandidate($, c))}
+                  />
+                </Box>
               </Box>
             ))}
           </Box>
