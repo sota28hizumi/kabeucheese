@@ -1,5 +1,3 @@
-<p align="center"><img src="docs/logo.png" alt="kabeucheese のアイコン。チーズから伸びた糸が、チェックの付いた決定と、灰色の点線の選ばなかった案につながっている" width="200"></p>
-
 # kabeucheese
 
 Claude Code で Claude と壁打ちしたときに、自分がどんな思考をたどったかを後から見返すための Mod（プラグイン）。
