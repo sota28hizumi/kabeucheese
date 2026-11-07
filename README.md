@@ -106,9 +106,9 @@ Claude Code で Claude と壁打ちしたときに、自分がどんな思考を
     <th>メニューを開いたところ</th>
   </tr>
   <tr>
-    <td align="center"><img src="docs/mobile.png" alt="スマホ幅のマップ。上の段に名前・マップと用語集の切り替え・メニューのボタンがあり、論点が縦のツリーで並ぶ。画面の下に説明の引き出しの端が見える" width="230"></td>
-    <td align="center"><img src="docs/mobile-sheet.png" alt="論点を押したところ。説明の引き出しが下からせり上がり、決定の中身・つながり・メモ欄が出ている" width="230"></td>
-    <td align="center"><img src="docs/mobile-menu.png" alt="メニューを開いたところ。右から出た引き出しに、フォルダ・セッション・用語の検索欄が並ぶ" width="230"></td>
+    <td align="center"><img src="docs/phone-map.png" alt="スマホ幅のマップ。上の段に名前・マップと用語集の切り替え・メニューのボタンがあり、論点が縦のツリーで並ぶ。画面の下に説明の引き出しの端が見える" width="230"></td>
+    <td align="center"><img src="docs/phone-sheet.png" alt="論点を押したところ。説明の引き出しが下からせり上がり、決定の中身・つながり・メモ欄が出ている" width="230"></td>
+    <td align="center"><img src="docs/phone-menu.png" alt="メニューを開いたところ。右から出た引き出しに、フォルダ・セッション・用語の検索欄が並ぶ" width="230"></td>
   </tr>
   <tr>
     <td>上の段は1行。説明は下の引き出しにしまってある</td>
