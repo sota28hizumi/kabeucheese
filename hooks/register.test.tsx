@@ -159,3 +159,49 @@ test('保存先が未設定：/kabemap は案内を返し、/kabemap <URL> で�
   const ctx = await $.tool.call({ tool: 'mcp__kabeucheese__context' } as any)
   expect(JSON.parse(String((ctx as any).result)).artifactUrl).toBe('https://claude.ai/artifact/MINE')
 })
+
+test('前回の続き：ペインに前回のセッション名と、前回のマップで覆した決定を出す', async ($, on) => {
+  const store = new Map<string, unknown>()
+  engine(on, store, [])
+  await $.session.start({ cwd: 'C:\\Users\\me\\research', surface: 'desktop', isInteractive: true })
+
+  await $.tool.call({
+    tool: 'mcp__kabeucheese__show',
+    title: '実験条件の続き',
+    continuesFrom: '実験条件の決め方',
+    items: [
+      { kind: 'decision', label: 'サンプル数は20', superseded: true, previous: true },
+      { kind: 'question', label: 'サンプル数を増やすか' },
+      { kind: 'decision', label: 'サンプル数は40', superseded: false },
+    ],
+  } as any)
+  const saved = store.get(`summary:${SID}`) as any
+  expect(saved.continuesFrom).toBe('実験条件の決め方')
+  // 前回の分は最後にまとめられ、覆った扱いになる
+  expect(saved.items.map((i: any) => i.label)).toEqual(['サンプル数を増やすか', 'サンプル数は40', 'サンプル数は20'])
+  expect(saved.items[2].superseded).toBe(true)
+  expect(saved.counts.decisions).toBe(1)
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  expect((await ui.find({ type: 'Text', text: /前回「実験条件の決め方」の続き/ }))).toBeTruthy()
+  expect((await ui.find({ type: 'Text', text: /前回のマップで覆した決定/ }))).toBeTruthy()
+  const old = await ui.find({ type: 'Text', text: /^サンプル数は20$/ })
+  expect(old?.props?.strikethrough).toBe(true)
+  await ui.unmount()
+})
+
+test('前の版で保存した概要（continuesFrom・previous が無い）も読み直せる', async ($, on) => {
+  const store = new Map<string, unknown>()
+  store.set(`summary:${SID}`, {
+    sessionId: SID, folder: 'x', title: '古い概要', summary: '', items: [{ kind: 'question', label: '古い問い', superseded: false }],
+    counts: { questions: 1, decisions: 0, terms: 0 }, newTerms: [], updatedAt: 5,
+  })
+  engine(on, store, [])
+  await $.session.start({ cwd: 'C:\\Users\\me', surface: 'desktop', isInteractive: true })
+  const r = await $.command.run({ command: 'kabeview' })
+  expect(r.text).toMatch(/開きました/)
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  expect((await ui.find({ type: 'Text', text: /古い問い/ }))?.text).toBe('古い問い')
+  expect(await ui.find({ type: 'Text', text: /の続き/ })).toBeFalsy()
+  await ui.unmount()
+})

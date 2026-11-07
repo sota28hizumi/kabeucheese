@@ -6,6 +6,7 @@ export const PALETTE = {
   decision: '#22a06b', // 若竹
   term: '#8b5cd6', // 菫
   superseded: '#8a8f98',
+  continued: '#9a6a2f', // 続き：チーズの皮の茶
   muted: '#7d838c',
 }
 

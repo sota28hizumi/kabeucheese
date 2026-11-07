@@ -21,6 +21,7 @@
   --pre: #c4850c;      /* 前提：山吹 */
   --ref: #1f93c7;      /* 参照：空 */
   --rev: #d94c63;      /* 変更：紅 */
+  --cont: #9a6a2f;     /* 続き：チーズの皮の茶 */
   --accent: #3f7bd6;
   --font-display: "Zen Old Mincho", "Yu Mincho", "Hiragino Mincho ProN", serif;
   --font-body: "Zen Kaku Gothic New", "Hiragino Sans", "Yu Gothic UI", "Meiryo", sans-serif;
@@ -30,13 +31,13 @@
   :root:not([data-theme="light"]) {
     --bg: #15181c; --surface: #1d2126; --ink: #e6e8ea; --muted: #9aa1a8; --line: #343a41; --grid: #1f2328;
     --q: #6e9fe8; --d: #4cc08b; --o: #a3adb7; --gray: #6b7178; --cmp: #a888e6; --why: #4cc08b; --pre: #e0a535;
-    --ref: #4fb4e0; --rev: #ec6f83; --accent: #6e9fe8; color-scheme: dark;
+    --ref: #4fb4e0; --rev: #ec6f83; --cont: #d9a35c; --accent: #6e9fe8; color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
   --bg: #15181c; --surface: #1d2126; --ink: #e6e8ea; --muted: #9aa1a8; --line: #343a41; --grid: #1f2328;
   --q: #6e9fe8; --d: #4cc08b; --o: #a3adb7; --gray: #6b7178; --cmp: #a888e6; --why: #4cc08b; --pre: #e0a535;
-  --ref: #4fb4e0; --rev: #ec6f83; --accent: #6e9fe8; color-scheme: dark;
+  --ref: #4fb4e0; --rev: #ec6f83; --cont: #d9a35c; --accent: #6e9fe8; color-scheme: dark;
 }
 html, body { height: 100%; }
 body { background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 14px; line-height: 1.6; }
@@ -100,7 +101,10 @@ main { display: grid; grid-template-columns: 1fr 360px; min-height: 0; }
 .chip { font-size: 10.5px; padding: 0 6px; border-radius: 999px; border: 1px solid var(--line); background: var(--bg); color: var(--muted); white-space: nowrap; cursor: pointer; }
 .chip:hover { color: var(--ink); border-color: var(--muted); }
 .xref { position: absolute; font-size: 10.5px; padding: 1px 7px; border-radius: 999px; cursor: pointer; white-space: nowrap; max-width: 210px; overflow: hidden; text-overflow: ellipsis;
-  background: color-mix(in srgb, var(--ref) 12%, var(--surface)); border: 1px dashed var(--ref); color: var(--ref); }
+  --xc: var(--ref);
+  background: color-mix(in srgb, var(--xc) 12%, var(--surface)); border: 1px dashed var(--xc); color: var(--xc); }
+.xref.continued { --xc: var(--cont); }
+.xref.revised { --xc: var(--rev); }
 .elabel { position: absolute; transform: translate(-50%, -50%); font-size: 10px; padding: 0 5px; border-radius: 4px; background: var(--surface); border: 1px solid currentColor; white-space: nowrap; pointer-events: none; }
 
 .panel { border-left: 1px solid var(--line); background: var(--surface); overflow: auto; min-width: 0;
@@ -198,6 +202,7 @@ textarea { width: 100%; box-sizing: border-box; min-height: 84px; resize: vertic
     reason: { label: '理由', color: 'var(--why)', dash: '5 4' },
     premise: { label: '前提', color: 'var(--pre)', dash: '5 4' },
     reference: { label: '参照', color: 'var(--ref)', dash: '2 4' },
+    continued: { label: '続き', color: 'var(--cont)', dash: '2 4' },
     revised: { label: '変更', color: 'var(--rev)', dash: '5 4' },
   };
   const NODE_W = 212, NODE_H = 86, COL = 272, ROW = 108, PAD = 40;
@@ -312,9 +317,22 @@ textarea { width: 100%; box-sizing: border-box; min-height: 84px; resize: vertic
     const out = [];
     for (const s of S.sessions.values()) {
       if (s.id === sid) continue;
-      for (const e of s.edges || []) if (e.kind === 'reference' && e.toSession === sid) out.push({ from: s, edge: e });
+      for (const e of s.edges || []) if (e.toSession === sid) out.push({ from: s, edge: e });
     }
     return out;
+  }
+  // セッションをまたぐ線は、線の代わりにチップで示す（押すと相手のマップへ飛ぶ）
+  const CROSS = { reference: ['↗ 参照', '↙ 参照元'], continued: ['↩ 前回', '↪ 続き'], revised: ['→ 変更後', '← 変更前'] };
+  const crossKind = kind => (CROSS[kind] ? kind : 'reference');
+  function crossText(kind, isOut, sid, nid) {
+    const s = S.sessions.get(sid);
+    const here = S.sessions.get(S.sessionId);
+    const where = !s ? '別セッション：' : (here && folderOf(here) === folderOf(s) ? '' : `${folderOf(s)}：`);
+    return `${CROSS[crossKind(kind)][isOut ? 0 : 1]}　${where}${nodeLabel(sid, nid)}`;
+  }
+  function crossChip(kind, isOut, sid, nid, style) {
+    const s = S.sessions.get(sid);
+    return `<button type="button" class="xref ${crossKind(kind)}" data-jump="${esc(sid || '')}" data-jnode="${esc(nid || '')}" ${style ? `style="${style}"` : ''} title="${esc(s ? `${folderOf(s)}／${s.title || ''}` : '')}">${esc(crossText(kind, isOut, sid, nid))}</button>`;
   }
   function nodeLabel(sid, nid) {
     const s = S.sessions.get(sid);
@@ -355,18 +373,18 @@ textarea { width: 100%; box-sizing: border-box; min-height: 84px; resize: vertic
       paths.push(`<path d="${curve(a, b)}" fill="none" stroke="${color}" stroke-width="1.5" ${off ? 'stroke-dasharray="3 3"' : ''} marker-end="url(#arrow)" style="color:${color}"/>`);
       if (kind !== 'derived') labels.push(`<span class="elabel" style="left:${(a.x + b.x) / 2}px;top:${(a.y + b.y) / 2}px;color:${color}">${esc(EDGE[kind].label)}</span>`);
     }
+    // 別セッションへのチップは、ノードの上（出ていく線）と下（入ってくる線）の行間に並べる
+    const slots = new Map();
+    const toSlot = (nodeId, isOut, chip) => {
+      const key = `${nodeId}|${isOut ? 'out' : 'in'}`;
+      if (!slots.has(key)) slots.set(key, { nodeId, isOut, chips: [] });
+      slots.get(key).chips.push(chip);
+    };
     // 枝をまたぐ線（点線の曲線）
-    const xrefCount = new Map();
     for (const e of session.edges || []) {
       const kind = EDGE[e.kind] ? e.kind : 'compared';
       if (kind === 'reference' || (e.toSession && e.toSession !== sid)) {
-        const from = L.pos.get(e.from);
-        if (!from) continue;
-        const k = (xrefCount.get(e.from) || 0); xrefCount.set(e.from, k + 1);
-        const f = px(from);
-        const ts = S.sessions.get(e.toSession);
-        const title = ts ? `${folderOf(ts)}：${nodeLabel(e.toSession, e.to)}` : '別セッション';
-        xrefs.push(`<button type="button" class="xref" data-jump="${esc(e.toSession || '')}" data-jnode="${esc(e.to)}" style="left:${f.x + NODE_W + 10}px;top:${f.y + 4 + k * 22}px" title="参照：${esc(title)}">↗ ${esc(title)}</button>`);
+        if (L.pos.has(e.from)) toSlot(e.from, true, { kind, sid: e.toSession, nid: e.to });
         continue;
       }
       const A = L.pos.get(e.from), B = L.pos.get(e.to);
@@ -392,11 +410,15 @@ textarea { width: 100%; box-sizing: border-box; min-height: 84px; resize: vertic
     // 他のセッションからの参照
     const inc = incomingRefs(sid);
     for (const { from, edge } of inc) {
-      const to = L.pos.get(edge.to);
-      if (!to) continue;
-      const t = px(to);
-      const k = (xrefCount.get(edge.to) || 0); xrefCount.set(edge.to, k + 1);
-      xrefs.push(`<button type="button" class="xref" data-jump="${esc(from.id)}" data-jnode="${esc(edge.from)}" style="left:${t.x + NODE_W + 10}px;top:${t.y + 4 + k * 22}px" title="参照元：${esc(folderOf(from))}">↙ ${esc(folderOf(from))}：${esc(nodeLabel(from.id, edge.from))}</button>`);
+      if (L.pos.has(edge.to)) toSlot(edge.to, false, { kind: edge.kind, sid: from.id, nid: edge.from });
+    }
+    for (const { nodeId, isOut, chips } of slots.values()) {
+      const p = px(L.pos.get(nodeId));
+      const gap = 4;
+      const w = (NODE_W - gap * (chips.length - 1)) / chips.length;
+      const top = isOut ? p.y - 21 : p.y + NODE_H + 3;
+      chips.forEach((c, i) => xrefs.push(crossChip(c.kind, isOut, c.sid, c.nid,
+        `left:${p.x + i * (w + gap)}px;top:${top}px;width:${w}px;max-width:${w}px;box-sizing:border-box`)));
     }
 
     const nodesHtml = L.nodes.map(n => { const p = px(L.pos.get(n.id)); return nodeHtml(n, `left:${p.x}px;top:${p.y}px`); }).join('');
@@ -412,15 +434,14 @@ textarea { width: 100%; box-sizing: border-box; min-height: 84px; resize: vertic
         const kind = EDGE[e.kind] ? e.kind : 'compared';
         if (kind === 'reference' || (e.toSession && e.toSession !== sid)) {
           if (e.from !== n.id) continue;
-          const ts = S.sessions.get(e.toSession);
-          out.push(`<button type="button" class="xref" data-jump="${esc(e.toSession || '')}" data-jnode="${esc(e.to)}">↗ ${esc(ts ? folderOf(ts) : '別セッション')}：${esc(nodeLabel(e.toSession, e.to))}</button>`);
+          out.push(crossChip(kind, true, e.toSession, e.to));
         } else {
           const other = e.from === n.id ? e.to : e.from;
           if (!L.byId.has(other)) continue;
           out.push(`<span class="chip" role="button" tabindex="0" data-goto="${esc(other)}" style="color:${EDGE[kind].color};border-color:currentColor">${esc(EDGE[kind].label)} ${e.from === n.id ? '→' : '←'} ${esc(L.byId.get(other).label)}</span>`);
         }
       }
-      for (const { from, edge } of inc) if (edge.to === n.id) out.push(`<button type="button" class="xref" data-jump="${esc(from.id)}" data-jnode="${esc(edge.from)}">↙ ${esc(folderOf(from))}：${esc(nodeLabel(from.id, edge.from))}</button>`);
+      for (const { from, edge } of inc) if (edge.to === n.id) out.push(crossChip(edge.kind, false, from.id, edge.from));
       return out.length ? `<div class="xrefs">${out.join('')}</div>` : '';
     };
     const seen = new Set();
@@ -449,7 +470,7 @@ textarea { width: 100%; box-sizing: border-box; min-height: 84px; resize: vertic
   // ---------- 右パネル ----------
   function legendHtml() {
     const row = (k) => `<svg width="38" height="10"><path d="M1,5 L37,5" stroke="${EDGE[k].color}" stroke-width="1.6" stroke-dasharray="${EDGE[k].dash}" fill="none"/></svg><span>${EDGE[k].label}</span>`;
-    return `<div class="legend">${['derived', 'compared', 'reason', 'premise', 'revised', 'reference'].map(row).join('')}</div>`;
+    return `<div class="legend">${['derived', 'compared', 'reason', 'premise', 'revised', 'continued', 'reference'].map(row).join('')}</div>`;
   }
   function memoHtml(key) {
     const m = S.memos.get(key);
@@ -461,9 +482,17 @@ textarea { width: 100%; box-sizing: border-box; min-height: 84px; resize: vertic
     const d = nodes.filter(n => n.kind === 'decision' && !isOff(n)).length;
     const terms = new Set(nodes.flatMap(n => n.terms || []));
     const decisions = nodes.filter(n => n.kind === 'decision' || n.kind === 'superseded');
+    const prev = s.previousSessionId ? S.sessions.get(s.previousSessionId) : null;
+    const nexts = [...S.sessions.values()].filter(x => x.previousSessionId === s.id)
+      .sort((a, b) => String(a.updatedAt || '').localeCompare(String(b.updatedAt || '')));
+    const chainLink = (x, label) => `<li><button type="button" class="linkbtn" data-jump="${esc(x.id)}" data-jnode=""><small style="color:var(--cont)">${label}</small> ${esc(x.title || '（無題）')} <small>${esc(fmt(x.updatedAt))}</small></button></li>`;
+    const chain = prev || nexts.length
+      ? `<h3>前後のセッション</h3><ul class="list">${prev ? chainLink(prev, '前回 ←') : ''}${nexts.map(x => chainLink(x, '続き →')).join('')}</ul>`
+      : '';
     return `<div class="eyebrow"><span>${esc(folderOf(s))}</span><span>更新 ${esc(fmt(s.updatedAt))}</span></div>
       <h2>${esc(s.title || '（無題）')}</h2>
       ${s.summary ? `<p>${esc(s.summary)}</p>` : ''}
+      ${chain}
       <div class="tiles"><div class="tile"><b>${q}</b><span>問い</span></div><div class="tile"><b>${d}</b><span>決定</span></div><div class="tile"><b>${terms.size}</b><span>用語</span></div></div>
       ${decisions.length ? `<h3>決定</h3><ul class="list">${decisions.map(n => `<li><button type="button" class="linkbtn" data-goto="${esc(n.id)}" style="${isOff(n) ? 'text-decoration:line-through;color:var(--gray)' : ''}">${esc(n.label)}</button></li>`).join('')}</ul>` : ''}
       <h3>線の種類</h3>${legendHtml()}
@@ -475,11 +504,11 @@ textarea { width: 100%; box-sizing: border-box; min-height: 84px; resize: vertic
     if (n.parent && L.has(n.parent)) rel.push({ kind: n.parentKind || 'derived', dir: '←', id: n.parent });
     for (const c of s.nodes || []) if (c.parent === n.id) rel.push({ kind: c.parentKind || 'derived', dir: '→', id: c.id });
     for (const e of s.edges || []) {
-      if (e.toSession && e.toSession !== s.id) { if (e.from === n.id) rel.push({ kind: 'reference', dir: '→', id: e.to, sid: e.toSession }); continue; }
+      if (e.toSession && e.toSession !== s.id) { if (e.from === n.id) rel.push({ kind: crossKind(e.kind), dir: '→', id: e.to, sid: e.toSession }); continue; }
       if (e.from === n.id) rel.push({ kind: e.kind, dir: '→', id: e.to });
       else if (e.to === n.id) rel.push({ kind: e.kind, dir: '←', id: e.from });
     }
-    for (const { from, edge } of incomingRefs(s.id)) if (edge.to === n.id) rel.push({ kind: 'reference', dir: '←', id: edge.from, sid: from.id });
+    for (const { from, edge } of incomingRefs(s.id)) if (edge.to === n.id) rel.push({ kind: crossKind(edge.kind), dir: '←', id: edge.from, sid: from.id });
     const terms = (n.terms || []).filter(id => S.terms.has(id));
     return `<button type="button" class="back" data-back>← このセッションの概要</button>
       <div class="eyebrow" style="margin-top:10px"><span style="color:var(--${n.kind === 'question' ? 'q' : n.kind === 'decision' && !isOff(n) ? 'd' : 'muted'})">${esc(kindText(n))}</span></div>

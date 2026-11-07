@@ -21,13 +21,14 @@ const EMPTY: Summary = {
   folder: '',
   title: '',
   summary: '',
+  continuesFrom: '',
   items: [],
   counts: { questions: 0, decisions: 0, terms: 0 },
   newTerms: [],
   updatedAt: 0,
 }
 
-const summary = atom({ plugin: 'kabeucheese', key: 'summary' } as const, EMPTY, { shape: 'summary-1' })
+const summary = atom({ plugin: 'kabeucheese', key: 'summary' } as const, EMPTY, { shape: 'summary-2' })
 const url = atom({ plugin: 'kabeucheese', key: 'url' } as const, FALLBACK_URL, { shape: 'url-1' })
 
 const storeKey = (sessionId: string) => `summary:${sessionId}`
@@ -104,16 +105,20 @@ export function toSummary(input: Record<string, unknown>, sessionId: string, fol
       const kind = o.kind === 'question' || o.kind === 'decision' ? o.kind : null
       const label = str(o.label, 120)
       if (!kind || !label) return null
-      return { kind, label, superseded: o.superseded === true }
+      const previous = kind === 'decision' && o.previous === true
+      return { kind, label, superseded: o.superseded === true || previous, previous }
     })
     .filter((it): it is Item => it !== null)
     .slice(0, 80)
+  // 前回のセッションで覆した決定は最後にまとめる
+  items.sort((a, b) => Number(a.previous) - Number(b.previous))
   const counts = (input.counts && typeof input.counts === 'object' ? input.counts : {}) as Record<string, unknown>
   return {
     sessionId,
     folder,
     title: str(input.title, 80),
     summary: str(input.summary, 400),
+    continuesFrom: str(input.continuesFrom, 80),
     items,
     counts: {
       questions: num(counts.questions) || items.filter(i => i.kind === 'question').length,
@@ -129,7 +134,14 @@ async function loadStored($: Engine): Promise<boolean> {
   const sessionId = await $.session.id()
   const stored = (await $.store.get(storeKey(sessionId))) as Summary | undefined
   if (!stored || typeof stored !== 'object' || stored.sessionId !== sessionId || !Array.isArray(stored.items)) return false
-  await update($, summary, () => stored)
+  // 前の版で保存した概要にも、あとから足した項目を補う
+  const next: Summary = {
+    ...EMPTY,
+    ...stored,
+    continuesFrom: typeof stored.continuesFrom === 'string' ? stored.continuesFrom : '',
+    items: stored.items.map(it => ({ ...it, previous: it.previous === true })),
+  }
+  await update($, summary, () => next)
   return true
 }
 
@@ -174,15 +186,17 @@ export const register: Register = on => {
         properties: {
           title: { type: 'string', description: 'セッション名（20字前後）' },
           summary: { type: 'string', description: 'このセッションで考えたことを2〜3文' },
+          continuesFrom: { type: 'string', description: '続きとして結んだ前回のセッション名（前回なしは空文字）' },
           items: {
             type: 'array',
-            description: '流れ図の順に、問いとその決定',
+            description: '流れ図の順に、問いとその決定。この会話で覆した前回のセッションの決定は previous: true で最後に',
             items: {
               type: 'object',
               properties: {
                 kind: { type: 'string', enum: ['question', 'decision'] },
                 label: { type: 'string' },
                 superseded: { type: 'boolean', description: '覆った決定なら true' },
+                previous: { type: 'boolean', description: '前回のセッションのマップにある決定なら true' },
               },
               required: ['kind', 'label'],
             },
@@ -288,6 +302,8 @@ export const register: Register = on => {
       )
     }
 
+    const current = s.items.filter(it => !it.previous)
+    const previous = s.items.filter(it => it.previous)
     const d = new Date(s.updatedAt + 9 * 3_600_000)
     const stamp = `${d.getUTCMonth() + 1}/${d.getUTCDate()} ${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`
 
@@ -298,6 +314,11 @@ export const register: Register = on => {
           <Text bold wrap="wrap">
             {s.title || '（無題）'}
           </Text>
+          {s.continuesFrom ? (
+            <Text color={PALETTE.continued} wrap="wrap">
+              {`↩ 前回「${s.continuesFrom}」の続き`}
+            </Text>
+          ) : null}
           {s.summary ? (
             <Text dimColor wrap="wrap">
               {s.summary}
@@ -327,9 +348,9 @@ export const register: Register = on => {
         )}
         <Link href={link} label="思考マップを開く →" />
 
-        {head('問いと決定', PALETTE.question, `${s.items.length}件`)}
+        {head('問いと決定', PALETTE.question, `${current.length}件`)}
         <Box flexDirection="column">
-          {s.items.map((it, i) =>
+          {current.map((it, i) =>
             it.kind === 'question' ? (
               <Box key={`q-${i}`} flexDirection="row" gap={1}>
                 <Text color={PALETTE.question} bold>
@@ -349,6 +370,20 @@ export const register: Register = on => {
             ),
           )}
         </Box>
+
+        {previous.length > 0 ? (
+          <Box flexDirection="column">
+            {head('前回のマップで覆した決定', PALETTE.continued, `${previous.length}件`)}
+            {previous.map((it, i) => (
+              <Box key={`p-${i}`} flexDirection="row" gap={1} paddingLeft={2}>
+                <Text color={PALETTE.superseded}>×</Text>
+                <Text wrap="wrap" strikethrough dimColor>
+                  {it.label}
+                </Text>
+              </Box>
+            ))}
+          </Box>
+        ) : null}
 
         {s.newTerms.length > 0 ? (
           <Box flexDirection="column" gap={1}>

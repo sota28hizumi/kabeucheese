@@ -17,6 +17,10 @@ description: kabeucheese の解析手順。今のセッションの会話を見�
 - `get` で `sessions/<sessionId>` を読む。あれば、その `version` を控える（書き込み時の `if_version`）。無ければ新規。
 - `list` で `terms` を全部読む（`query.limit: 1000`）。既存の用語の `id`・`name`・`occurrences`・`version` を控える。
 - `get` で `meta/current` を読み、あれば `version` を控える。
+- **前回のセッション**を決める（`folder` が `未分類` のときは決めない）：
+  - このセッションの文書がすでにあり、`previousSessionId` が入っていれば、それをそのまま使う（変えない）。
+  - 文書がまだ無いか `previousSessionId` が無ければ、`query` で `sessions` を `where: [["folder", "==", "<folder>"]]`、`order_by: { field: "updatedAt", direction: "desc" }`、`limit: 10` で読み、`id` がこのセッションと違う最初の1件を前回とする。1件も無ければ前回なし。
+  - 前回があれば、その文書の `nodes`・`edges`・`version` を控える（手順3bで使う）。
 - `memos` コレクションには**触らない**（読みも書きもしない）。ユーザーがページで書いたメモはそこにあり、論点・用語の id で結び付いている。だから**既存の論点・用語の id は変えない**。
 
 ## 2. 会話全体を見直して論点を作る
@@ -53,6 +57,9 @@ description: kabeucheese の解析手順。今のセッションの会話を見�
 - `premise`：あるノードが別の枝の前提になった
 - `revised`：覆った決定（from）→ 新しい決定（to）
 - `reference`：別のセッション（別フォルダでもよい）の論点を参照した。`toSession` に相手のセッション id を入れる。相手は `query` で `sessions` を `folder` で絞って探し、その `nodes` から一致する論点の id を `to` に入れる。見つからなければ線は引かない
+- `continued`：前回のセッションの続き（手順3b）。`toSession` に前回のセッション id を入れる
+
+`toSession` が付いた線は、線を書いた文書の `from` から、別セッションの `to` へ向かう。ページでは線の代わりに、押すと相手のマップへ飛ぶチップとして両側に出る。
 
 ## 3. 前回との差分のとり方（再実行時）
 
@@ -60,6 +67,22 @@ description: kabeucheese の解析手順。今のセッションの会話を見�
 - 新しい論点は新しい id で足す（前回の最大番号の続き）。
 - 決定が覆ったら、古い決定を `kind: superseded`、`status: superseded` に変え、新しい決定を足して `revised` の線で結ぶ。古い決定は消さない。
 - 前回のノードを消すのは、明らかな誤りだったときだけ。
+
+## 3b. 前のセッションの続き
+
+手順1で前回のセッションが決まったときだけ行う。
+
+1. **続きの線**：このセッションの文書に `"previousSessionId": "<前回のid>"` を入れる。さらに `edges` に次の1本を足す（すでにあれば足さない）。
+   ```json
+   { "id": "c1", "from": "<このセッションの最初の問いのid>", "to": "<前回のノードのid>", "toSession": "<前回のid>", "kind": "continued" }
+   ```
+   `to` は、この会話が受け継いだ前回の論点。はっきりしなければ、前回の覆っていない決定のうち `order` がいちばん大きいもの、決定が無ければ最後のノードにする。
+2. **前回の決定を覆したとき**：この会話で、前回のマップにある決定を変えた場合は、前回の文書を書き換える。
+   - その決定を `kind: superseded`、`status: superseded` にする。
+   - 前回の文書の `edges` に、新しい決定へ向かう線を足す：`{ "id": "x-<このセッションidの先頭8文字>-<連番>", "from": "<前回の決定のid>", "to": "<このセッションの新しい決定のid>", "toSession": "<このセッションのid>", "kind": "revised" }`
+   - 前回の文書の `updatedAt` は**変えない**（変えると、次のセッションの「前回」がずれる）。代わりに `revisedAt` に今の時刻を入れる。ほかのノードやタイトルにも触らない。
+   - 覆したかどうかは会話の中身で判断する。はっきり別の結論に変えたときだけで、同じ決定を詳しくしただけなら覆したことにしない。
+3. 前回より前のセッション（同じフォルダ）の決定を、会話がはっきり名指しして覆したときは、そのセッションにも 2. と同じことをする。名指しが無ければ前回だけを見る。
 
 ## 4. 用語カード
 
@@ -88,9 +111,11 @@ description: kabeucheese の解析手順。今のセッションの会話を見�
    ```json
    { "id": "<sessionId>", "folder": "<folder>", "title": "<20字前後のセッション名>",
      "summary": "<このセッションで考えたことを2〜3文>", "startedAt": "<前回の値。新規なら今>",
-     "updatedAt": "<今>", "nodes": [...], "edges": [...] }
+     "updatedAt": "<今>", "previousSessionId": "<前回のid。無ければ書かない>",
+     "nodes": [...], "edges": [...] }
    ```
    既存なら `if_version` に控えた version を付ける。
+   手順3bで前回の文書を書き換えたときは、同じ batch に、前回の文書の `set`（控えた version を `if_version` に）も入れる。
 2. 用語：新しい用語は `set`（`if_version` なし）、既存の用語は `update` で変わったフィールドだけ（`occurrences` は全体）を `if_version` 付きで。
 3. `meta/current` を `set`：`{ "folder": "<folder>", "sessionId": "<sessionId>", "updatedAt": "<今>" }`（既存なら `if_version`）。
 
@@ -104,10 +129,12 @@ version の不一致で断られたら、その文書を読み直してから書
 {
   "title": "<セッション名>",
   "summary": "<2〜3文>",
+  "continuesFrom": "<前回のセッション名。前回なしなら空文字>",
   "items": [
     { "kind": "question", "label": "…" },
     { "kind": "decision", "label": "…", "superseded": false },
-    { "kind": "decision", "label": "…", "superseded": true }
+    { "kind": "decision", "label": "…", "superseded": true },
+    { "kind": "decision", "label": "<この会話で覆した前回の決定>", "superseded": true, "previous": true }
   ],
   "counts": { "questions": 0, "decisions": 0, "terms": 0 },
   "newTerms": ["このセッションで新しく登録した用語名"]
@@ -116,7 +143,9 @@ version の不一致で断られたら、その文書を読み直してから書
 
 `items` は流れ図の順（問いのあとにその決定）。`counts.decisions` は覆っていない決定の数、`counts.terms` はこのセッションのノードに付いた用語の数。
 
-最後にユーザーへ、足した論点・覆った決定・新しい用語を2〜4行で伝え、Artifact の URL を示す。
+前回のセッションで覆した決定は、`previous: true` を付けて `items` の最後に並べる。
+
+最後にユーザーへ、足した論点・覆った決定（前回の分も）・新しい用語と、どのセッションの続きとして結んだかを2〜4行で伝え、Artifact の URL を示す。
 
 ## 守ること
 
