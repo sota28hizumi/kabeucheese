@@ -195,12 +195,25 @@ textarea { width: 100%; box-sizing: border-box; min-height: 84px; resize: vertic
   .sizer, .zoombar { display: none !important; }
   .vtree { display: block; }
   .panel { border-left: 0; border-top: 1px solid var(--line); padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
-  .search { margin-left: 0; width: 100%; }
+  /* 上の段は「名前・マップ／用語集・メニュー」の1行。フォルダ・セッション・検索はメニューを開いたときだけ出す */
+  header.top { padding-block: 8px; gap: 8px 10px; }
+  .brand { order: 0; font-size: 18px; margin-right: 0; min-width: 0; }
+  .brand .logo { width: 36px; height: 36px; margin: -6px 4px -6px -4px; }
+  .brand small { display: none; }
+  .tabs { order: 1; margin-left: auto; }
+  .tabs button { padding: 5px 10px; }
+  header.top .menubtn { order: 2; display: inline-flex; }
+  .ctl { order: 3; flex: 1 1 100%; display: none; }
+  .search { order: 4; margin-left: 0; width: 100%; display: none; }
+  header.top.open .ctl { display: flex; }
+  header.top.open .search { display: block; }
   #search { width: 100%; box-sizing: border-box; }
   #sessionSel { max-width: none; }
-  .ctl { flex: 1 1 100%; }
   .ctl select { flex: 1 1 auto; width: 0; }
 }
+.menubtn { display: none; align-items: center; justify-content: center; width: 36px; height: 34px; padding: 0;
+  background: var(--bg); border: 1px solid var(--line); border-radius: 6px; cursor: pointer; color: var(--ink); }
+.menubtn[aria-expanded="true"] { background: var(--ink); color: var(--surface); border-color: var(--ink); }
 @media (prefers-reduced-motion: no-preference) {
   .stage { scroll-behavior: smooth; }
 }
@@ -215,6 +228,9 @@ textarea { width: 100%; box-sizing: border-box; min-height: 84px; resize: vertic
       <button id="tabMap" type="button" aria-pressed="true">マップ</button>
       <button id="tabTerms" type="button" aria-pressed="false">用語集</button>
     </div>
+    <button type="button" class="menubtn" id="menuBtn" aria-expanded="false" aria-controls="folderSel sessionSel search" aria-label="フォルダ・セッション・検索を開く" title="フォルダ・セッション・検索">
+      <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M3 5h12M3 9h12M3 13h12"/></svg>
+    </button>
     <div class="search">
       <input id="search" type="search" placeholder="用語を検索" autocomplete="off" aria-label="用語を検索">
       <div id="results" class="results" hidden></div>
@@ -961,6 +977,17 @@ textarea { width: 100%; box-sizing: border-box; min-height: 84px; resize: vertic
   document.addEventListener('keydown', ev => {
     if ((ev.key === 'Enter' || ev.key === ' ') && ev.target.matches('[role="button"]')) { ev.preventDefault(); ev.target.click(); }
   });
+  // スマホ幅のメニュー（フォルダ・セッション・検索）
+  const setMenu = open => {
+    document.querySelector('header.top').classList.toggle('open', open);
+    $('menuBtn').setAttribute('aria-expanded', String(open));
+    $('menuBtn').setAttribute('aria-label', open ? 'フォルダ・セッション・検索を閉じる' : 'フォルダ・セッション・検索を開く');
+  };
+  $('menuBtn').addEventListener('click', () => setMenu($('menuBtn').getAttribute('aria-expanded') !== 'true'));
+  document.addEventListener('keydown', ev => { if (ev.key === 'Escape' && $('menuBtn').getAttribute('aria-expanded') === 'true') { setMenu(false); $('menuBtn').focus(); } });
+  $('folderSel').addEventListener('change', () => setMenu(false));
+  $('sessionSel').addEventListener('change', () => setMenu(false));
+  $('results').addEventListener('click', () => setMenu(false));
   $('folderSel').addEventListener('change', e => { S.userPicked = true; S.folder = e.target.value; S.sel = null; const vs = visibleSessions(); if (!vs.some(s => s.id === S.sessionId)) S.sessionId = vs[0] ? vs[0].id : null; render(); });
   $('sessionSel').addEventListener('change', e => { if (e.target.value) goSession(e.target.value); });
   $('tabMap').addEventListener('click', () => { S.view = 'map'; S.sel = null; render(); });
