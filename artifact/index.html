@@ -108,6 +108,8 @@ main { display: grid; grid-template-columns: 1fr 360px; min-height: 0; }
 .node.off { background: var(--bg); border-style: dashed; color: var(--gray); }
 .node.off .kind { color: var(--gray); }
 .node.superseded .label { text-decoration: line-through; }
+.node.open { border-style: dashed; }
+.node .opentag { margin-left: auto; padding: 0 5px; border: 1px solid currentColor; border-radius: 4px; font-size: 9px; letter-spacing: .05em; }
 .node .terms { display: flex; gap: 4px; overflow: hidden; margin-top: auto; }
 .chip { font-size: 10.5px; padding: 0 6px; border-radius: 999px; border: 1px solid var(--line); background: var(--bg); color: var(--muted); white-space: nowrap; cursor: pointer; }
 .chip:hover { color: var(--ink); border-color: var(--muted); }
@@ -244,17 +246,20 @@ textarea { width: 100%; box-sizing: border-box; min-height: 84px; resize: vertic
     return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
   };
   const isOff = n => n.status === 'rejected' || n.status === 'superseded' || n.kind === 'superseded';
+  const isOpen = n => n.kind === 'question' && n.open === true;
   const nodeClass = n => {
     const kind = n.kind === 'superseded' ? 'decision' : n.kind;
-    return `${kind}${isOff(n) ? ' off' : ''}${n.status === 'superseded' || n.kind === 'superseded' ? ' superseded' : ''}`;
+    return `${kind}${isOff(n) ? ' off' : ''}${n.status === 'superseded' || n.kind === 'superseded' ? ' superseded' : ''}${isOpen(n) ? ' open' : ''}`;
   };
+  // 時刻は書き方（Z と +09:00）が混ざっても正しく並ぶよう、数値にして比べる
+  const ts = v => { const t = Date.parse(v || ''); return isNaN(t) ? 0 : t; };
   const kindText = n => n.kind === 'superseded' || n.status === 'superseded' ? '変更前の決定'
     : n.status === 'rejected' ? `${KIND_LABEL[n.kind] || n.kind}（選ばなかった）` : (KIND_LABEL[n.kind] || n.kind);
   const memoKey = (type, ...ids) => `${type}--${ids.join('--')}`.replace(/[^A-Za-z0-9_\-.~:@+]/g, '_').slice(0, 200);
 
   // ---------- 状態の選択 ----------
   function sessionsSorted() {
-    return [...S.sessions.values()].sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
+    return [...S.sessions.values()].sort((a, b) => ts(b.updatedAt) - ts(a.updatedAt));
   }
   function folders() {
     const set = new Set(sessionsSorted().map(folderOf));
@@ -371,7 +376,7 @@ textarea { width: 100%; box-sizing: border-box; min-height: 84px; resize: vertic
   function nodeHtml(n, style) {
     const sel = S.sel && S.sel.type === 'node' && S.sel.id === n.id ? ' sel' : '';
     return `<button type="button" class="node ${nodeClass(n)}${sel}" data-node="${esc(n.id)}" ${style ? `style="${style}"` : ''}>
-      <span class="kind"><i></i>${esc(kindText(n))}</span>
+      <span class="kind"><i></i>${esc(kindText(n))}${isOpen(n) ? '<span class="opentag">未決</span>' : ''}</span>
       <span class="label">${esc(n.label)}</span>
       <span class="terms">${termChips(n, 3)}</span></button>`;
   }
@@ -506,7 +511,8 @@ textarea { width: 100%; box-sizing: border-box; min-height: 84px; resize: vertic
     const decisions = nodes.filter(n => n.kind === 'decision' || n.kind === 'superseded');
     const prev = s.previousSessionId ? S.sessions.get(s.previousSessionId) : null;
     const nexts = [...S.sessions.values()].filter(x => x.previousSessionId === s.id)
-      .sort((a, b) => String(a.updatedAt || '').localeCompare(String(b.updatedAt || '')));
+      .sort((a, b) => ts(a.updatedAt) - ts(b.updatedAt));
+    const opens = nodes.filter(isOpen);
     const chainLink = (x, label) => `<li><button type="button" class="linkbtn" data-jump="${esc(x.id)}" data-jnode=""><small style="color:var(--cont)">${label}</small> ${esc(x.title || '（無題）')} <small>${esc(fmt(x.updatedAt))}</small></button></li>`;
     const chain = prev || nexts.length
       ? `<h3>前後のセッション</h3><ul class="list">${prev ? chainLink(prev, '前回 ←') : ''}${nexts.map(x => chainLink(x, '続き →')).join('')}</ul>`
@@ -517,6 +523,7 @@ textarea { width: 100%; box-sizing: border-box; min-height: 84px; resize: vertic
       ${chain}
       <div class="tiles"><div class="tile"><b>${q}</b><span>問い</span></div><div class="tile"><b>${d}</b><span>決定</span></div><div class="tile"><b>${terms.size}</b><span>用語</span></div></div>
       ${decisions.length ? `<h3>決定</h3><ul class="list">${decisions.map(n => `<li><button type="button" class="linkbtn" data-goto="${esc(n.id)}" style="${isOff(n) ? 'text-decoration:line-through;color:var(--gray)' : ''}">${esc(n.label)}</button></li>`).join('')}</ul>` : ''}
+      ${opens.length ? `<h3>まだ決めていない問い</h3><ul class="list">${opens.map(n => `<li><button type="button" class="linkbtn" data-goto="${esc(n.id)}">${esc(n.label)}</button></li>`).join('')}</ul>` : ''}
       <h3>線の種類</h3>${legendHtml()}
       <p class="note" style="padding:12px 0 0">論点を押すと詳しい中身、用語を押すと用語カードがここに開きます。</p>`;
   }
@@ -533,7 +540,7 @@ textarea { width: 100%; box-sizing: border-box; min-height: 84px; resize: vertic
     for (const { from, edge } of incomingRefs(s.id)) if (edge.to === n.id) rel.push({ kind: crossKind(edge.kind), dir: '←', id: edge.from, sid: from.id });
     const terms = (n.terms || []).filter(id => S.terms.has(id));
     return `<button type="button" class="back" data-back>← このセッションの概要</button>
-      <div class="eyebrow" style="margin-top:10px"><span style="color:var(--${n.kind === 'question' ? 'q' : n.kind === 'decision' && !isOff(n) ? 'd' : 'muted'})">${esc(kindText(n))}</span></div>
+      <div class="eyebrow" style="margin-top:10px"><span style="color:var(--${n.kind === 'question' ? 'q' : n.kind === 'decision' && !isOff(n) ? 'd' : 'muted'})">${esc(kindText(n))}${isOpen(n) ? '（まだ決めていない）' : ''}</span></div>
       <h2 style="${n.status === 'superseded' || n.kind === 'superseded' ? 'text-decoration:line-through;color:var(--gray)' : ''}">${esc(n.label)}</h2>
       ${n.detail ? `<p>${esc(n.detail)}</p>` : ''}
       ${terms.length ? `<h3>用語</h3><div style="display:flex;flex-wrap:wrap;gap:6px">${terms.map(id => `<span class="chip" role="button" tabindex="0" data-term="${esc(id)}">${esc(S.terms.get(id).name)}</span>`).join('')}</div>` : ''}

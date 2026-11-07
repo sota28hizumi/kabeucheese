@@ -71,6 +71,53 @@ async function contextOf($: Engine) {
 export const isArtifactUrl = (v: unknown): v is string =>
   typeof v === 'string' && /^https:\/\/claude\.ai\/(code\/)?artifact\/[A-Za-z0-9-]+/.test(v)
 
+/** Artifact の URL から id を取り出す（/artifact/ と /code/artifact/ の書き方の違いを吸収する） */
+export const artifactIdOf = (v: unknown) =>
+  typeof v === 'string' ? (/^https:\/\/claude\.ai\/(?:code\/)?artifact\/([A-Za-z0-9-]+)/.exec(v)?.[1] ?? '') : ''
+
+// ---------------------------------------------------------------------------
+// 機密らしい文字列の検査（保存先への書き込みだけを見る）
+// ---------------------------------------------------------------------------
+
+const SECRET_PATTERNS: [string, RegExp][] = [
+  ['API キー（sk-）', /\bsk-[A-Za-z0-9_-]{20,}/],
+  ['GitHub のトークン', /\b(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,})/],
+  ['AWS のアクセスキー', /\bAKIA[0-9A-Z]{16}\b/],
+  ['Google の API キー', /\bAIza[0-9A-Za-z_-]{35}\b/],
+  ['Slack のトークン', /\bxox[abprs]-[A-Za-z0-9-]{10,}/],
+  ['秘密鍵', /-----BEGIN [A-Z ]*PRIVATE KEY-----/],
+  ['JWT', /\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/],
+  ['パスワードやトークンの値', /\b(?:api[_-]?key|secret|token|password|passwd)\s*[:=]\s*["']?[^\s"']{8,}/i],
+]
+
+/** 値の中の文字列をすべて調べ、機密らしいものがあればその種類を返す（値そのものは返さない） */
+export function findSecret(value: unknown, depth = 0): string | null {
+  if (depth > 20 || value == null) return null
+  if (typeof value === 'string') {
+    for (const [kind, re] of SECRET_PATTERNS) if (re.test(value)) return kind
+    return null
+  }
+  if (Array.isArray(value)) {
+    for (const v of value) {
+      const hit = findSecret(v, depth + 1)
+      if (hit) return hit
+    }
+    return null
+  }
+  if (typeof value === 'object') {
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      const hit = findSecret(k, depth + 1) ?? findSecret(v, depth + 1)
+      if (hit) return hit
+    }
+  }
+  return null
+}
+
+const WRITE_ACTIONS = new Set(['set', 'update', 'str_replace', 'batch'])
+
+export const SECRET_DENY = (kind: string) =>
+  `kabeucheese：保存しようとした内容に${kind}らしい文字列があるため、書き込みを止めました。その部分を消すか伏せ字にしてから書き直してください。`
+
 /** 保存先の URL：config.json にあればそれ、なければ /kabemap <URL> でこの PC に保存したもの */
 async function loadUrl($: Engine) {
   let next = ''
@@ -106,7 +153,9 @@ export function toSummary(input: Record<string, unknown>, sessionId: string, fol
       const label = str(o.label, 120)
       if (!kind || !label) return null
       const previous = kind === 'decision' && o.previous === true
-      return { kind, label, superseded: o.superseded === true || previous, previous }
+      const item: Item = { kind, label, superseded: o.superseded === true || previous, previous }
+      if (kind === 'question' && o.open === true) item.open = true
+      return item
     })
     .filter((it): it is Item => it !== null)
     .slice(0, 80)
@@ -173,7 +222,7 @@ export const register: Register = on => {
     await $.tool.register({
       name: 'context',
       description:
-        'kabeucheese の解析に使う前提（このセッションの sessionId、作業フォルダ名 folder、Artifact の URL artifactUrl）を返す。kabeucheese:analyze スキルの最初に呼ぶ。',
+        'kabeucheese の解析に使う前提（このセッションの sessionId、作業フォルダ名 folder、Artifact の URL artifactUrl、今の時刻 now）を返す。kabeucheese:analyze スキルの最初に呼ぶ。',
       inputSchema: { type: 'object', properties: {} },
       isDeferred: false,
     })
@@ -197,6 +246,7 @@ export const register: Register = on => {
                 label: { type: 'string' },
                 superseded: { type: 'boolean', description: '覆った決定なら true' },
                 previous: { type: 'boolean', description: '前回のセッションのマップにある決定なら true' },
+                open: { type: 'boolean', description: 'まだ決めていない問いなら true（question のときだけ）' },
               },
               required: ['kind', 'label'],
             },
@@ -221,7 +271,28 @@ export const register: Register = on => {
 
   on('tool.call', { tool: 'mcp__kabeucheese__context' }, async $ => {
     const ctx = await contextOf($)
-    return { result: JSON.stringify({ sessionId: ctx.sessionId, folder: ctx.folder, artifactUrl: ctx.artifactUrl }) }
+    // 時刻は Claude に推測させず、ここで UTC の ISO 文字列で渡す（文字列のまま並べ替えるので書き方をそろえる）
+    const now = new Date().toISOString()
+    return { result: JSON.stringify({ sessionId: ctx.sessionId, folder: ctx.folder, artifactUrl: ctx.artifactUrl, now }) }
+  })
+
+  // 保存先の Artifact への書き込みに、API キーなど機密らしい文字列が入っていたら止める
+  on('tool.call', { tool: 'ArtifactData' }, async ($, e, next) => {
+    const input = e as unknown as Record<string, unknown>
+    const target = artifactIdOf(await read($, url))
+    if (!target || artifactIdOf(input.url) !== target || !WRITE_ACTIONS.has(String(input.action))) return next(e)
+    const payloads: unknown[] = [input.data, input.new_str, input.writes]
+    const files = [input.file_path, ...(Array.isArray(input.writes) ? input.writes.map(w => (w as Record<string, unknown>)?.file_path) : [])]
+    for (const f of files) {
+      if (typeof f !== 'string' || !f) continue
+      try {
+        payloads.push(await $.fs.read(f))
+      } catch {
+        // 読めないファイルはツール側で失敗する
+      }
+    }
+    const hit = findSecret(payloads)
+    return hit ? { deny: SECRET_DENY(hit) } : next(e)
   })
 
   on('tool.call', { tool: 'mcp__kabeucheese__show' }, async ($, e) => {
@@ -359,6 +430,7 @@ export const register: Register = on => {
                 <Text wrap="wrap" bold>
                   {it.label}
                 </Text>
+                {it.open ? <Text dimColor>未決</Text> : null}
               </Box>
             ) : (
               <Box key={`d-${i}`} flexDirection="row" gap={1} paddingLeft={2}>

@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { folderOf, toSummary, UNSORTED } from './register'
+import { artifactIdOf, findSecret, folderOf, toSummary, UNSORTED } from './register'
 
 const PANE = {
   plugin: 'kabeucheese',
@@ -77,11 +77,12 @@ test('show ツールで概要を保存してペインを開き、問いと決定
   await $.session.start({ cwd: 'C:\\Users\\me\\myGoogleDrive\\jobHunting', surface: 'desktop', isInteractive: true })
 
   const ctx = await $.tool.call({ tool: 'mcp__kabeucheese__context' } as any)
-  expect(JSON.parse(String((ctx as any).result))).toEqual({
-    sessionId: SID,
-    folder: 'jobHunting',
-    artifactUrl: 'https://claude.ai/artifact/TEST',
-  })
+  const parsed = JSON.parse(String((ctx as any).result))
+  expect(parsed.sessionId).toBe(SID)
+  expect(parsed.folder).toBe('jobHunting')
+  expect(parsed.artifactUrl).toBe('https://claude.ai/artifact/TEST')
+  // 時刻は UTC の ISO 文字列（Z で終わる）
+  expect(parsed.now).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/)
 
   await $.tool.call({
     tool: 'mcp__kabeucheese__show',
@@ -203,5 +204,67 @@ test('前の版で保存した概要（continuesFrom・previous が無い）も�
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
   expect((await ui.find({ type: 'Text', text: /古い問い/ }))?.text).toBe('古い問い')
   expect(await ui.find({ type: 'Text', text: /の続き/ })).toBeFalsy()
+  await ui.unmount()
+})
+
+test('機密の検査：API キーやトークンらしい文字列を見つけ、ふつうの文は通す', () => {
+  expect(findSecret({ detail: 'キーは sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123 だった' })).toMatch(/API キー/)
+  expect(findSecret([{ data: { nodes: [{ label: 'x', detail: 'ghp_' + 'a'.repeat(36) }] } }])).toMatch(/GitHub/)
+  expect(findSecret('-----BEGIN RSA PRIVATE KEY-----')).toBe('秘密鍵')
+  expect(findSecret({ note: 'password = hunter2hunter2' })).toMatch(/パスワード/)
+  expect(findSecret({ label: 'API キーは環境変数に置くことにした', terms: ['token', 'secret'] })).toBeNull()
+  expect(findSecret({ detail: 'sk-learn と scikit-learn を比べた' })).toBeNull()
+  expect(artifactIdOf('https://claude.ai/code/artifact/AbC-1?x=1')).toBe('AbC-1')
+  expect(artifactIdOf('https://example.com/artifact/AbC')).toBe('')
+})
+
+test('ArtifactData：保存先への書き込みに機密があれば止め、それ以外は通す', async ($, on) => {
+  const ran: string[] = []
+  engine(on, new Map(), [])
+  on('tool.call', (_: unknown, e: { tool: string; action?: string }) => {
+    if (e.tool === 'ArtifactData') ran.push(String(e.action))
+    return { result: 'ok' }
+  })
+  await $.session.start({ cwd: 'C:\Users\me\research', surface: 'desktop', isInteractive: true })
+  const secret = { nodes: [{ id: 'd1', detail: 'AKIAABCDEFGHIJKLMNOP を使う' }] }
+
+  const denied = await $.tool.call({
+    tool: 'ArtifactData', action: 'batch', url: 'https://claude.ai/artifact/TEST',
+    writes: [{ op: 'set', collection: 'sessions', doc_id: 's1', data: secret }],
+  } as any)
+  expect((denied as any).deny).toMatch(/AWS のアクセスキー/)
+  expect((denied as any).deny).not.toMatch(/AKIA/)
+  expect(ran).toEqual([])
+
+  // 読み取り、別の Artifact への書き込み、機密の無い書き込みは通る
+  await $.tool.call({ tool: 'ArtifactData', action: 'get', url: 'https://claude.ai/artifact/TEST', collection: 'sessions', doc_id: 's1' } as any)
+  await $.tool.call({ tool: 'ArtifactData', action: 'set', url: 'https://claude.ai/artifact/OTHER', collection: 'x', doc_id: 'y', data: secret } as any)
+  const ok = await $.tool.call({
+    tool: 'ArtifactData', action: 'set', url: 'https://claude.ai/code/artifact/TEST', collection: 'sessions', doc_id: 's1',
+    data: { nodes: [{ id: 'q1', label: 'API キーの置き場所をどうするか' }] },
+  } as any)
+  expect((ok as any).result).toBe('ok')
+  expect(ran).toEqual(['get', 'set', 'set'])
+})
+
+test('未決の問い：ペインに「未決」と出す', async ($, on) => {
+  const store = new Map<string, unknown>()
+  engine(on, store, [])
+  await $.session.start({ cwd: 'C:\Users\me\research', surface: 'desktop', isInteractive: true })
+  await $.tool.call({
+    tool: 'mcp__kabeucheese__show',
+    title: '手法の比較',
+    items: [
+      { kind: 'question', label: 'A と B のどちらにするか', open: true },
+      { kind: 'question', label: '評価指標は何にするか' },
+      { kind: 'decision', label: 'F1 を使う', open: true },
+    ],
+  } as any)
+  const saved = store.get(`summary:${SID}`) as any
+  expect(saved.items[0].open).toBe(true)
+  expect(saved.items[1].open).toBeUndefined()
+  expect(saved.items[2].open).toBeUndefined()
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  expect(await ui.find({ type: 'Text', text: /^未決$/ })).toBeTruthy()
   await ui.unmount()
 })

@@ -1,6 +1,6 @@
 {
   "name": "kabeucheese",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "壁打ちの問い・選択肢・決定と用語を Artifact の思考マップに保存し、ペインに概要を出す（/kabemap・/kabeview）",
   "types": "./types/index.d.ts"
 }

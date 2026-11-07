@@ -5,6 +5,8 @@ export type Item = {
   superseded: boolean
   /** 前回のセッションのマップにある決定（この会話で覆したもの） */
   previous: boolean
+  /** まだ決めていない問い（question のときだけ） */
+  open?: boolean
 }
 
 export type Summary = {
