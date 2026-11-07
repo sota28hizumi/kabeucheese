@@ -188,7 +188,9 @@ textarea { width: 100%; box-sizing: border-box; min-height: 84px; resize: vertic
 .vtree .xref { position: static; }
 
 @media (max-width: 760px) {
-  main { grid-template-columns: 1fr; grid-template-rows: auto auto; overflow: auto; }
+  main { grid-template-columns: 1fr; grid-template-rows: auto auto; align-content: start; overflow: auto; }
+  /* 縦のツリーの高さだけ枠を伸ばす（PC 幅の min-height: 0 が効くと、ツリーが下の説明に重なる） */
+  .stagewrap, .stagewrap > .stage { display: block; min-height: auto; }
   .stage { overflow: visible; background-image: none; }
   .sizer, .zoombar { display: none !important; }
   .vtree { display: block; }
