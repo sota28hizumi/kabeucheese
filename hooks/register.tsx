@@ -63,7 +63,7 @@ async function contextOf($: Engine) {
     $.session.id(),
     $.session.cwd(),
     homeOf($),
-    read($, url),
+    urlOf($),
   ])
   return { sessionId, folder: folderOf(cwd, home), cwd, artifactUrl }
 }
@@ -118,21 +118,31 @@ const WRITE_ACTIONS = new Set(['set', 'update', 'str_replace', 'batch'])
 export const SECRET_DENY = (kind: string) =>
   `kabeucheese：保存しようとした内容に${kind}らしい文字列があるため、書き込みを止めました。その部分を消すか伏せ字にしてから書き直してください。`
 
-/** 保存先の URL：config.json にあればそれ、なければ /kabemap <URL> でこの PC に保存したもの */
-async function loadUrl($: Engine) {
-  let next = ''
+/** 保存先の URL：config.json にあればそれ、なければ /kabemap <URL> でこの PC に保存したもの（書き込みはしない） */
+async function resolveUrl($: Engine) {
   try {
     const text = await $.fs.read(`${$.plugin.root}/config.json`)
     const parsed = JSON.parse(typeof text === 'string' ? text : '') as { artifactUrl?: unknown }
-    if (isArtifactUrl(parsed.artifactUrl)) next = parsed.artifactUrl
+    if (isArtifactUrl(parsed.artifactUrl)) return parsed.artifactUrl
   } catch {
     // 読めなければ下へ
   }
-  if (!next) {
-    const saved = await $.store.get(URL_KEY)
-    if (isArtifactUrl(saved)) next = saved
-  }
+  const saved = await $.store.get(URL_KEY)
+  return isArtifactUrl(saved) ? saved : ''
+}
+
+async function loadUrl($: Engine) {
+  const next = await resolveUrl($)
   if (next) await update($, url, () => next)
+  return next
+}
+
+/**
+ * 今の保存先。/clear のあとは新しいセッション id で続き、session.start が来ないので
+ * $.state の url は初期値（空）に戻る。空なら config.json と store から読み直す。
+ */
+async function urlOf($: Engine) {
+  return (await read($, url)) || (await loadUrl($))
 }
 
 // ---------------------------------------------------------------------------
@@ -222,6 +232,148 @@ export function termIdOf(name: string): string {
   return `u-${h.toString(36)}`
 }
 
+// ---------------------------------------------------------------------------
+// 資料の取り込み（/kabeimport）：作業フォルダの資料と git の履歴を一覧にする
+// ---------------------------------------------------------------------------
+
+/** 中を見ないフォルダ（依存物・生成物・環境） */
+const SKIP_DIRS = new Set([
+  'node_modules', '__pycache__', 'venv', '.venv', 'env', 'site-packages', 'dist', 'build', 'out', 'target',
+  '.git', '.svn', '.hg', '.idea', '.vscode', '.cache', '.next', '.ipynb_checkpoints', 'wandb', 'mlruns', 'lightning_logs',
+])
+
+/** 機密が入っていそうなファイル名（一覧に出さず、数だけ数える） */
+export const isSecretName = (name: string) =>
+  /^\.env(\.|$)|\.(pem|key|p12|pfx|keystore|jks)$|^id_(rsa|ed25519|ecdsa)|(^|[._-])(credentials?|secrets?|tokens?|passwords?|passwd)([._-]|$)|^\.(netrc|npmrc|pypirc)$/i.test(name)
+
+const KINDS: [string, RegExp][] = [
+  ['note', /\.(md|markdown|txt|org|rst|tex|bib)$/i],
+  ['office', /\.(docx?|pptx?|xlsx?|odt|key|pages)$/i],
+  ['pdf', /\.pdf$/i],
+  ['notebook', /\.ipynb$/i],
+  ['code', /\.(py|r|m|jl|js|ts|tsx|c|cc|cpp|h|hpp|java|kt|go|rs|sh|ps1|ya?ml|toml|cfg|ini)$/i],
+  ['data', /\.(csv|tsv|json|jsonl|parquet|h5|hdf5|npy|npz|mat|pkl|pt|pth|ckpt|safetensors|ply|bin)$/i],
+  ['image', /\.(png|jpe?g|gif|svg|webp|bmp|tiff?|mp4|mov)$/i],
+]
+export const kindOf = (name: string) => KINDS.find(([, re]) => re.test(name))?.[0] ?? 'other'
+
+/** 中身を読む価値が高い順（同じ日付なら先に並べ、件数が多いときに残す） */
+const KIND_RANK: Record<string, number> = { note: 0, office: 1, pdf: 1, notebook: 2, code: 3, data: 5, image: 5, other: 6 }
+
+export type ScanFile = { path: string; kind: string; size: number; modified: string; firstCommit?: string; lastCommit?: string }
+export type ScanCommit = { date: string; subject: string; files: number }
+
+/** `git log --name-only --date=short --pretty=format:@@%ad%x09%s` の出力を読む */
+export function parseGitLog(out: string): { commits: ScanCommit[]; first: Map<string, string>; last: Map<string, string> } {
+  const commits: ScanCommit[] = []
+  const first = new Map<string, string>()
+  const last = new Map<string, string>()
+  let cur: ScanCommit | null = null
+  for (const raw of out.split(/\r?\n/)) {
+    const line = raw.trim()
+    if (!line) continue
+    if (line.startsWith('@@')) {
+      const [date = '', ...rest] = line.slice(2).split('\t')
+      cur = { date: date.slice(0, 10), subject: rest.join('\t').slice(0, 160), files: 0 }
+      commits.push(cur)
+      continue
+    }
+    if (!cur) continue
+    cur.files++
+    const p = line.replace(/\\/g, '/')
+    // log は新しい順：最初に見た日付が最後の更新、最後に見た日付が最初の追加
+    if (!last.has(p)) last.set(p, cur.date)
+    first.set(p, cur.date)
+  }
+  return { commits, first, last }
+}
+
+const MAX_VISIT = 4000
+const MAX_FILES = 500
+const MAX_DEPTH = 7
+
+/** 作業フォルダを歩いて資料の一覧を作る（中身は読まない） */
+export async function scanFolder($: Engine, root: string) {
+  const files: ScanFile[] = []
+  let visited = 0
+  let secret = 0
+  let truncated = false
+  const queue: [string, number][] = [['', 0]]
+  while (queue.length) {
+    const [rel, depth] = queue.shift()!
+    let entries: Awaited<ReturnType<Engine['fs']['list']>> = []
+    try {
+      entries = await $.fs.list(rel ? `${root}/${rel}` : root)
+    } catch {
+      continue
+    }
+    for (const e of entries) {
+      if (++visited > MAX_VISIT) {
+        truncated = true
+        break
+      }
+      const path = rel ? `${rel}/${e.name}` : e.name
+      if (e.kind === 'dir') {
+        if (depth < MAX_DEPTH && !SKIP_DIRS.has(e.name) && !e.name.startsWith('.')) queue.push([path, depth + 1])
+        continue
+      }
+      if (e.kind !== 'file') continue
+      if (isSecretName(e.name)) {
+        secret++
+        continue
+      }
+      if (e.name.startsWith('~$') || /^(thumbs\.db|desktop\.ini|\.ds_store)$/i.test(e.name)) continue
+      files.push({ path, kind: kindOf(e.name), size: e.size, modified: e.mtimeMs ? new Date(e.mtimeMs).toISOString().slice(0, 10) : '' })
+    }
+    if (truncated) break
+  }
+
+  let commits: ScanCommit[] = []
+  try {
+    const r = await $.process.run(
+      ['git', 'log', '--name-only', '--date=short', '--pretty=format:@@%ad%x09%s', '-n', '1500', '--', '.'],
+      { cwd: root, timeoutMs: 20000 },
+    )
+    if (r.exitCode === 0) {
+      const top = await $.process.run(['git', 'rev-parse', '--show-prefix'], { cwd: root, timeoutMs: 5000 })
+      const prefix = top.exitCode === 0 ? top.stdout.trim() : ''
+      const g = parseGitLog(r.stdout)
+      commits = g.commits
+      for (const f of files) {
+        const key = prefix + f.path
+        if (g.first.has(key)) f.firstCommit = g.first.get(key)
+        if (g.last.has(key)) f.lastCommit = g.last.get(key)
+      }
+    }
+  } catch {
+    // git が無い・リポジトリでない
+  }
+
+  const dateOf = (f: ScanFile) => f.firstCommit || f.modified || '9999'
+  const byKind: Record<string, number> = {}
+  for (const f of files) byKind[f.kind] = (byKind[f.kind] ?? 0) + 1
+  let shown = files
+  if (files.length > MAX_FILES) {
+    truncated = true
+    shown = [...files].sort((a, b) => (KIND_RANK[a.kind] ?? 9) - (KIND_RANK[b.kind] ?? 9)).slice(0, MAX_FILES)
+  }
+  shown = [...shown].sort((a, b) => dateOf(a).localeCompare(dateOf(b)) || a.path.localeCompare(b.path))
+  const dates = [...shown.map(dateOf), ...commits.map(c => c.date)].filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d)).sort()
+  return {
+    files: shown,
+    totalFiles: files.length,
+    byKind,
+    excludedSecretFiles: secret,
+    truncated,
+    commits: commits.slice(0, 400).reverse(),
+    totalCommits: commits.length,
+    dateRange: dates.length ? { from: dates[0], to: dates[dates.length - 1] } : null,
+  }
+}
+
+/** 取り込んだ時期のセッション id：フォルダと時期の始まりから決まる（再取り込みでも同じ） */
+export const importSessionId = (folder: string, from: string) => `imp-${termIdOf(folder)}-${from.replace(/-/g, '').slice(0, 8)}`
+
 /** 候補のうち、まだ追加していないもの */
 const pendingCandidates = (s: Summary) => {
   const added = new Set((s.added ?? []).map(normName))
@@ -287,6 +439,9 @@ export const SETUP_TEXT =
 const ANALYZE_PROMPT =
   'kabeucheese:analyze スキルの手順で、このセッションの会話を見直して思考マップを更新し、最後にペインを開いてください。'
 
+const IMPORT_PROMPT =
+  'kabeucheese:import スキルの手順で、この作業フォルダの資料と git の履歴を読み、kabeucheese を入れる前からの経緯を時期ごとの思考マップとして取り込んでください。'
+
 // ---------------------------------------------------------------------------
 // フック
 // ---------------------------------------------------------------------------
@@ -299,6 +454,18 @@ export const register: Register = on => {
       name: 'kabemap',
       description: '会話を解析して思考マップ（Artifact）を更新し、概要のペインを開く（初回は /kabemap <Artifact の URL> で保存先を設定）',
       argumentHint: '[Artifact の URL]',
+    })
+    await $.command.register({
+      name: 'kabeimport',
+      description: 'kabeucheese を入れる前からの活動を、作業フォルダの資料と git の履歴から時期ごとのマップにして取り込む',
+      argumentHint: '[読む範囲や時期の指定（任意）]',
+    })
+    await $.tool.register({
+      name: 'scan',
+      description:
+        'kabeucheese:import スキルで使う。作業フォルダの資料の一覧（相対パス・種類・更新日・git で最初に入った日）と git のコミット履歴、フォルダの key、取り込み用のセッション id の付け方を返す。中身は読まない。',
+      inputSchema: { type: 'object', properties: {} },
+      isDeferred: false,
     })
     await $.command.register({
       name: 'kabeview',
@@ -375,10 +542,41 @@ export const register: Register = on => {
     return { result: JSON.stringify({ sessionId: ctx.sessionId, folder: ctx.folder, artifactUrl: ctx.artifactUrl, now }) }
   })
 
+  on('tool.call', { tool: 'mcp__kabeucheese__scan' }, async $ => {
+    const ctx = await contextOf($)
+    const scan = await scanFolder($, ctx.cwd)
+    return {
+      result: JSON.stringify({
+        folder: ctx.folder,
+        folderKey: termIdOf(ctx.folder),
+        root: ctx.cwd,
+        artifactUrl: ctx.artifactUrl,
+        now: new Date().toISOString(),
+        sessionIdPattern: `imp-${termIdOf(ctx.folder)}-<時期の始まりの YYYYMMDD>`,
+        ...scan,
+      }),
+    }
+  })
+
+  on('command.run', { command: 'kabeimport' }, async ($, e) => {
+    const ctx = await contextOf($)
+    if (!ctx.artifactUrl) {
+      await openPane($)
+      return { text: SETUP_TEXT }
+    }
+    if (ctx.folder === UNSORTED) {
+      return { text: '作業フォルダを選んで始めたセッションで使ってください（今は「未分類」のため、どの資料を読むか決められません）。' }
+    }
+    const hint = (e.args ?? '').trim().slice(0, 300)
+    const text = IMPORT_PROMPT + (hint ? `\n読む範囲・時期の指定：${hint}` : '')
+    $.clock.after(0, () => void $.prompt.submit({ text, asUser: true }).catch(() => {}))
+    return { text: `「${ctx.folder}」の資料を読んで、これまでの経緯を取り込みます。` }
+  })
+
   // 保存先の Artifact への書き込みに、API キーなど機密らしい文字列が入っていたら止める
   on('tool.call', { tool: 'ArtifactData' }, async ($, e, next) => {
     const input = e as unknown as Record<string, unknown>
-    const target = artifactIdOf(await read($, url))
+    const target = artifactIdOf(await urlOf($))
     if (!target || artifactIdOf(input.url) !== target || !WRITE_ACTIONS.has(String(input.action))) return next(e)
     const payloads: unknown[] = [input.data, input.new_str, input.writes]
     const files = [input.file_path, ...(Array.isArray(input.writes) ? input.writes.map(w => (w as Record<string, unknown>)?.file_path) : [])]
@@ -412,7 +610,7 @@ export const register: Register = on => {
       await update($, url, () => arg)
       return { text: `保存先を設定しました：${arg}\nもう一度 /kabemap を送ると、このセッションのマップを作ります。` }
     }
-    if (!(await read($, url))) {
+    if (!(await urlOf($))) {
       await openPane($)
       return { text: SETUP_TEXT }
     }
@@ -468,7 +666,8 @@ export const register: Register = on => {
     const { Box, Text, Link, Button } = els
     const Svg = 'Svg' in els ? els.Svg : undefined
     const s = await read($, summary)
-    const href = await read($, url)
+    // 描画中は書き込まず、空なら設定から読むだけにする（/clear のあと）
+    const href = (await read($, url)) || (await resolveUrl($))
     const cols = e.props?.bodyColumns ?? 48
     const px = Math.max(260, Math.min(560, Math.round(cols * 8.2)))
     const link = s.sessionId ? `${href}#s-${s.sessionId}` : href

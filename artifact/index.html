@@ -135,6 +135,15 @@ main { display: grid; grid-template-columns: 1fr 360px; min-height: 0; }
 .cnote.corrected { border-left-color: var(--rev); background: color-mix(in srgb, var(--rev) 8%, transparent); }
 .userbox { border-left: 3px solid var(--q); padding: 4px 0 4px 10px; white-space: pre-wrap; }
 .node .opentag { margin-left: auto; padding: 0 5px; border: 1px solid currentColor; border-radius: 4px; font-size: 9px; letter-spacing: .05em; }
+.node .tags { margin-left: auto; display: flex; gap: 4px; }
+.node .tags .opentag { margin-left: 0; }
+.node .opentag.inf { color: var(--pre); }
+.srcbadge { font-size: 10px; letter-spacing: .05em; padding: 0 6px; border-radius: 999px; border: 1px solid var(--cont); color: var(--cont); }
+.srcbadge.inf { border-color: var(--pre); color: var(--pre); }
+.srclist li { font-size: 12px; line-height: 1.5; padding: 3px 0; }
+.srclist small { color: var(--muted); }
+.srcpath { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 11.5px; word-break: break-all; }
+.more-src summary { cursor: pointer; font-size: 12px; color: var(--muted); padding: 4px 0; }
 .node .terms { display: flex; gap: 4px; overflow: hidden; margin-top: auto; }
 .chip { font-size: 10.5px; padding: 0 6px; border-radius: 999px; border: 1px solid var(--line); background: var(--bg); color: var(--muted); white-space: nowrap; cursor: pointer; }
 .chip:hover { color: var(--ink); border-color: var(--muted); }
@@ -341,6 +350,22 @@ textarea { width: 100%; box-sizing: border-box; min-height: 84px; resize: vertic
   // 時刻は書き方（Z と +09:00）が混ざっても正しく並ぶよう、数値にして比べる
   const ts = v => { const t = Date.parse(v || ''); return isNaN(t) ? 0 : t; };
 
+  // ---------- 資料から取り込んだ時期（/kabeimport） ----------
+  const isImported = s => !!s && s.source === 'import';
+  const isInferred = n => n.basis === 'inferred';
+  const ymd = v => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(v || '')); return m ? [+m[1], +m[2], +m[3]] : null; };
+  function periodText(s) {
+    const p = s.period || {};
+    const a = ymd(p.from || s.startedAt), b = ymd(p.to || s.updatedAt);
+    if (!a) return '';
+    if (!b) return `${a[0]}/${a[1]}/${a[2]}〜`;
+    if (a[0] === b[0] && a[1] === b[1]) return a[2] === b[2] ? `${a[0]}/${a[1]}/${a[2]}` : `${a[0]}/${a[1]}/${a[2]}〜${b[2]}`;
+    return a[0] === b[0] ? `${a[0]}/${a[1]}〜${b[1]}` : `${a[0]}/${a[1]}〜${b[0]}/${b[1]}`;
+  }
+  /** 一覧や前後のリンクに出す日付：取り込んだ時期は期間、普段のセッションは更新時刻 */
+  const whenText = s => (isImported(s) ? periodText(s) : fmt(s.updatedAt));
+  const sourceLine = x => `<li><span class="srcpath">${esc(x.path || '')}</span>${x.date ? ` <small>${esc(x.date)}</small>` : ''}${x.note ? `<br><small>${esc(x.note)}</small>` : ''}</li>`;
+
   // ---------- 用語の照合と id（Mod の register.tsx と同じ式） ----------
   const normName = s => String(s || '').normalize('NFKC').toLowerCase().replace(/[\s・･\-_]/g, '').replace(/の/g, '');
   function termIdOf(name) {
@@ -524,7 +549,7 @@ textarea { width: 100%; box-sizing: border-box; min-height: 84px; resize: vertic
     if (S.folder) fsel.value = S.folder;
     const ssel = $('sessionSel');
     const vs = visibleSessions();
-    ssel.innerHTML = vs.length ? vs.map(s => `<option value="${esc(s.id)}">${esc(S.folder === '*' ? `[${folderOf(s)}] ` : '')}${esc(s.title || '（無題）')}  ${esc(fmt(s.updatedAt))}</option>`).join('') : '<option value="">（なし）</option>';
+    ssel.innerHTML = vs.length ? vs.map(s => `<option value="${esc(s.id)}">${esc(S.folder === '*' ? `[${folderOf(s)}] ` : '')}${isImported(s) ? '［資料］' : ''}${esc(s.title || '（無題）')}  ${esc(whenText(s))}</option>`).join('') : '<option value="">（なし）</option>';
     if (S.sessionId && vs.some(s => s.id === S.sessionId)) ssel.value = S.sessionId;
     $('tabMap').setAttribute('aria-pressed', String(S.view === 'map'));
     $('tabTerms').setAttribute('aria-pressed', String(S.view === 'terms'));
@@ -598,7 +623,7 @@ textarea { width: 100%; box-sizing: border-box; min-height: 84px; resize: vertic
   function nodeHtml(n, style) {
     const sel = S.sel && S.sel.type === 'node' && S.sel.id === n.id ? ' sel' : '';
     return `<button type="button" class="node ${nodeClass(n)}${sel}" data-node="${esc(n.id)}" ${style ? `style="${style}"` : ''}>
-      <span class="kind"><i></i>${esc(kindText(n))}${isOpen(n) ? '<span class="opentag">未決</span>' : ''}</span>
+      <span class="kind"><i></i>${esc(kindText(n))}${isOpen(n) || isInferred(n) ? `<span class="tags">${isOpen(n) ? '<span class="opentag">未決</span>' : ''}${isInferred(n) ? '<span class="opentag inf" title="資料の流れからの推定">推定</span>' : ''}</span>` : ''}</span>
       <span class="label">${esc(n.label)}</span>
       <span class="terms">${termChips(n, 3)}</span></button>`;
   }
@@ -740,18 +765,29 @@ textarea { width: 100%; box-sizing: border-box; min-height: 84px; resize: vertic
       .sort((a, b) => ts(a.updatedAt) - ts(b.updatedAt));
     const opens = nodes.filter(isOpen);
     const cands = unregistered(s);
-    const chainLink = (x, label) => `<li><button type="button" class="linkbtn" data-jump="${esc(x.id)}" data-jnode=""><small style="color:var(--cont)">${label}</small> ${esc(x.title || '（無題）')} <small>${esc(fmt(x.updatedAt))}</small></button></li>`;
+    const chainLink = (x, label) => `<li><button type="button" class="linkbtn" data-jump="${esc(x.id)}" data-jnode=""><small style="color:var(--cont)">${label}</small> ${isImported(x) ? '<small class="srcbadge">資料</small> ' : ''}${esc(x.title || '（無題）')} <small>${esc(whenText(x))}</small></button></li>`;
     const chain = prev || nexts.length
       ? `<h3>前後のセッション</h3><ul class="list">${prev ? chainLink(prev, '前回 ←') : ''}${nexts.map(x => chainLink(x, '続き →')).join('')}</ul>`
       : '';
-    return `<div class="eyebrow"><span>${esc(folderOf(s))}</span><span>更新 ${esc(fmt(s.updatedAt))}</span></div>
+    const imported = isImported(s);
+    const inferred = nodes.filter(isInferred).length;
+    const sources = Array.isArray(s.sources) ? s.sources.filter(x => x && x.path) : [];
+    const srcHtml = sources.length
+      ? `<h3>もとにした資料（${sources.length}）</h3><ul class="list srclist">${sources.slice(0, 8).map(sourceLine).join('')}</ul>`
+        + (sources.length > 8 ? `<details class="more-src"><summary>ほか ${sources.length - 8} 件</summary><ul class="list srclist">${sources.slice(8).map(sourceLine).join('')}</ul></details>` : '')
+      : '';
+    return `<div class="eyebrow"><span>${esc(folderOf(s))}</span>${imported
+        ? `<span class="srcbadge">資料から復元</span><span>期間 ${esc(periodText(s))}</span>`
+        : `<span>更新 ${esc(fmt(s.updatedAt))}</span>`}</div>
       <h2>${esc(s.title || '（無題）')}</h2>
       ${s.summary ? `<p>${esc(s.summary)}</p>` : ''}
+      ${imported ? `<p class="note" style="padding:0">会話の記録ではなく、作業フォルダの資料と git の履歴から組み立てた時期です。${inferred ? `「推定」の付いた論点（${inferred}個）は資料の流れからの推定なので、違っていればメモに書いてください。` : ''}</p>` : ''}
       ${chain}
       <div class="tiles"><div class="tile"><b>${q}</b><span>問い</span></div><div class="tile"><b>${d}</b><span>決定</span></div><div class="tile"><b>${terms.size}</b><span>用語</span></div></div>
       ${decisions.length ? `<h3>決定</h3><ul class="list">${decisions.map(n => `<li><button type="button" class="linkbtn" data-goto="${esc(n.id)}" style="${isOff(n) ? 'text-decoration:line-through;color:var(--gray)' : ''}">${esc(n.label)}</button></li>`).join('')}</ul>` : ''}
-      ${cands.length ? `<h3>会話に出てきた未登録の言葉</h3><div style="display:flex;flex-wrap:wrap;gap:6px">${cands.map(candChip).join('')}</div>` : ''}
+      ${cands.length ? `<h3>${imported ? '資料' : '会話'}に出てきた未登録の言葉</h3><div style="display:flex;flex-wrap:wrap;gap:6px">${cands.map(candChip).join('')}</div>` : ''}
       ${opens.length ? `<h3>まだ決めていない問い</h3><ul class="list">${opens.map(n => `<li><button type="button" class="linkbtn" data-goto="${esc(n.id)}">${esc(n.label)}</button></li>`).join('')}</ul>` : ''}
+      ${srcHtml}
       <h3>線の種類</h3>${legendHtml()}
       <p class="note" style="padding:12px 0 0">論点を押すと詳しい中身、用語を押すと用語カードがここに開きます。</p>`;
   }
@@ -771,9 +807,10 @@ textarea { width: 100%; box-sizing: border-box; min-height: 84px; resize: vertic
     // 説明文に出てこないが、この論点で拾われた未登録の言葉はチップで出す
     const extra = cands.filter(c => c.nodeId === n.id && !String(n.detail || '').includes(c.name) && !String(n.label || '').includes(c.name));
     return `<button type="button" class="back" data-back>← このセッションの概要</button>
-      <div class="eyebrow" style="margin-top:10px"><span style="color:var(--${n.kind === 'question' ? 'q' : n.kind === 'decision' && !isOff(n) ? 'd' : 'muted'})">${esc(kindText(n))}${isOpen(n) ? '（まだ決めていない）' : ''}</span></div>
+      <div class="eyebrow" style="margin-top:10px"><span style="color:var(--${n.kind === 'question' ? 'q' : n.kind === 'decision' && !isOff(n) ? 'd' : 'muted'})">${esc(kindText(n))}${isOpen(n) ? '（まだ決めていない）' : ''}</span>${isInferred(n) ? '<span class="srcbadge inf">推定</span>' : ''}</div>
       <h2 style="${n.status === 'superseded' || n.kind === 'superseded' ? 'text-decoration:line-through;color:var(--gray)' : ''}">${esc(n.label)}</h2>
       ${n.detail ? `<p>${markCandidates(n.detail, cands)}</p>` : ''}
+      ${Array.isArray(n.evidence) && n.evidence.length ? `<h3>根拠になった資料</h3><ul class="list srclist">${n.evidence.filter(x => x && x.path).map(sourceLine).join('')}</ul>` : ''}
       ${terms.length ? `<h3>用語</h3><div style="display:flex;flex-wrap:wrap;gap:6px">${terms.map(id => `<span class="chip" role="button" tabindex="0" data-term="${esc(id)}">${esc(S.terms.get(id).name)}</span>`).join('')}</div>` : ''}
       ${extra.length ? `<h3>この論点に出てきた未登録の言葉</h3><div style="display:flex;flex-wrap:wrap;gap:6px">${extra.map(candChip).join('')}</div>` : ''}
       ${rel.length ? `<h3>つながり</h3><ul class="list">${rel.map(r => {

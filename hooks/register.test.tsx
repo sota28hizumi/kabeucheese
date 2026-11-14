@@ -1,6 +1,8 @@
 import { expect, test } from 'claude-code/testing'
 
-import { artifactIdOf, findSecret, folderOf, normName, termIdOf, toCandidates, toSummary, UNSORTED } from './register'
+import {
+  artifactIdOf, findSecret, folderOf, importSessionId, isSecretName, kindOf, normName, parseGitLog, termIdOf, toCandidates, toSummary, UNSORTED,
+} from './register'
 
 const PANE = {
   plugin: 'kabeucheese',
@@ -159,6 +161,24 @@ test('保存先が未設定：/kabemap は案内を返し、/kabemap <URL> で�
 
   const ctx = await $.tool.call({ tool: 'mcp__kabeucheese__context' } as any)
   expect(JSON.parse(String((ctx as any).result)).artifactUrl).toBe('https://claude.ai/artifact/MINE')
+})
+
+test('/clear のあと（session.start が来ない）でも保存先を config.json と store から読み直す', async ($, on) => {
+  engine(on, new Map(), [])
+  // session.start を呼ばない：/clear のあとの新しいセッションと同じく、url は初期値のまま
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  expect((await ui.find({ type: 'Link' }))?.props?.href).toBe('https://claude.ai/artifact/TEST')
+  await ui.unmount()
+  const ctx = await $.tool.call({ tool: 'mcp__kabeucheese__context' } as any)
+  expect(JSON.parse(String((ctx as any).result)).artifactUrl).toBe('https://claude.ai/artifact/TEST')
+})
+
+test('/clear のあと：config.json が空でも /kabemap <URL> で保存した URL を使う', async ($, on) => {
+  engine(on, new Map<string, unknown>([['artifactUrl', 'https://claude.ai/artifact/SAVED']]), [], '')
+  const cmd = await $.command.run({ command: 'kabemap' })
+  expect(cmd.text).not.toMatch(/はじめての設定/)
+  const ctx = await $.tool.call({ tool: 'mcp__kabeucheese__context' } as any)
+  expect(JSON.parse(String((ctx as any).result)).artifactUrl).toBe('https://claude.ai/artifact/SAVED')
 })
 
 test('前回の続き：ペインに前回のセッション名と、前回のマップで覆した決定を出す', async ($, on) => {
@@ -333,4 +353,92 @@ test('返答の下：その返答に出てきた未登録の言葉だけを並�
   const miss = await $.ui.mount({ ...MSG, requestId: 'm2', props: { text: '関係のない返答', isFirstOfReply: true }, surface: 'desktop' } as any)
   expect(await miss.find({ type: 'Text', text: /用語集にない言葉/ })).toBeFalsy()
   await miss.unmount()
+})
+
+
+test('取り込み：git log を読み、ファイルごとに最初と最後のコミット日を出す', () => {
+  const out = [
+    '@@2025-07-01\t評価を F1 に変更',
+    'src/eval.py',
+    'notes/2025-07.md',
+    '',
+    '@@2025-05-10\t最初のコミット',
+    'src/eval.py',
+    'README.md',
+  ].join('\n')
+  const g = parseGitLog(out)
+  expect(g.commits.map(c => c.date)).toEqual(['2025-07-01', '2025-05-10'])
+  expect(g.commits[0].files).toBe(2)
+  expect(g.first.get('src/eval.py')).toBe('2025-05-10')
+  expect(g.last.get('src/eval.py')).toBe('2025-07-01')
+  expect(g.first.get('notes/2025-07.md')).toBe('2025-07-01')
+})
+
+test('取り込み：種類の判定、機密らしい名前、時期の id', () => {
+  expect(kindOf('中間発表.pptx')).toBe('office')
+  expect(kindOf('notes.md')).toBe('note')
+  expect(kindOf('train.ipynb')).toBe('notebook')
+  expect(kindOf('model.ckpt')).toBe('data')
+  expect(isSecretName('.env')).toBe(true)
+  expect(isSecretName('.env.local')).toBe(true)
+  expect(isSecretName('id_rsa')).toBe(true)
+  expect(isSecretName('server.pem')).toBe(true)
+  expect(isSecretName('environment.yml')).toBe(false)
+  expect(isSecretName('tokenizer.py')).toBe(false)
+  expect(importSessionId('researchNotes', '2025-04-01')).toBe('imp-researchnotes-20250401')
+  expect(importSessionId('研究', '2025-04-01')).toMatch(/^imp-u-[0-9a-z]+-20250401$/)
+})
+
+test('/kabeimport と scan：資料の一覧と git の日付を返し、依存物・機密は外す', async ($, on) => {
+  engine(on, new Map(), [])
+  const ROOT = 'C:\\Users\\me\\myGoogleDrive\\jobHunting'
+  const day = (d: string) => Date.parse(`${d}T12:00:00Z`)
+  const tree: Record<string, any[]> = {
+    [ROOT]: [
+      { name: 'README.md', kind: 'file', size: 900, mtimeMs: day('2025-08-01'), isLink: false },
+      { name: '.env', kind: 'file', size: 40, mtimeMs: day('2025-08-01'), isLink: false },
+      { name: 'notes', kind: 'dir', size: 0, mtimeMs: 0, isLink: false },
+      { name: 'node_modules', kind: 'dir', size: 0, mtimeMs: 0, isLink: false },
+      { name: '.git', kind: 'dir', size: 0, mtimeMs: 0, isLink: false },
+    ],
+    [`${ROOT}/notes`]: [
+      { name: '2025-04-10.md', kind: 'file', size: 300, mtimeMs: day('2025-08-01'), isLink: false },
+      { name: '~$draft.docx', kind: 'file', size: 1, mtimeMs: day('2025-08-01'), isLink: false },
+    ],
+  }
+  const listed: string[] = []
+  on('fs.list', (_: unknown, e: { path?: string }) => {
+    // エンジンは区切りを OS に合わせて直すので、/ と \ を同じに扱う
+    const key = String(e.path).replace(/\\/g, '/')
+    listed.push(key)
+    return { value: Object.entries(tree).find(([k]) => k.replace(/\\/g, '/') === key)?.[1] ?? [] }
+  })
+  on('process.run', (_: unknown, e: { argv: string[] }) => {
+    if (e.argv[1] === 'rev-parse') return { value: { exitCode: 0, stdout: '\n', stderr: '' } }
+    return { value: { exitCode: 0, stdout: '@@2025-04-12\tメモを追加\nnotes/2025-04-10.md\n\n@@2025-04-01\t開始\nREADME.md\n', stderr: '' } }
+  })
+  on('clock.after', () => ({ value: { cancel: () => {} } }))
+  await $.session.start({ cwd: ROOT, surface: 'desktop', isInteractive: true })
+
+  const r = JSON.parse(String(((await $.tool.call({ tool: 'mcp__kabeucheese__scan' } as any)) as any).result))
+  expect(listed.length).toBe(2)
+  expect(r.folder).toBe('jobHunting')
+  expect(r.folderKey).toBe('jobhunting')
+  expect(r.files.map((f: any) => f.path)).toEqual(['README.md', 'notes/2025-04-10.md'])
+  expect(r.files[0].firstCommit).toBe('2025-04-01')
+  expect(r.files[1]).toMatchObject({ kind: 'note', firstCommit: '2025-04-12', modified: '2025-08-01' })
+  expect(r.excludedSecretFiles).toBe(1)
+  expect(r.commits.map((c: any) => c.subject)).toEqual(['開始', 'メモを追加'])
+  expect(r.dateRange).toEqual({ from: '2025-04-01', to: '2025-04-12' })
+  expect(listed.some(p => /node_modules|\.git/.test(p))).toBe(false)
+  expect(JSON.stringify(r)).not.toMatch(/\.env/)
+
+  const cmd = await $.command.run({ command: 'kabeimport', args: '2025年度だけ' })
+  expect(cmd.text).toMatch(/jobHunting/)
+})
+
+test('/kabeimport：保存先なしでは始めない', async ($, on) => {
+  engine(on, new Map(), [], '')
+  await $.session.start({ cwd: 'C:\Users\me', surface: 'desktop', isInteractive: true })
+  expect((await $.command.run({ command: 'kabeimport' })).text).toMatch(/はじめての設定/)
 })
